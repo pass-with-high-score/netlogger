@@ -13,6 +13,9 @@
 @property (nonatomic, copy) NSString *resBodyBase64;
 
 - (instancetype)initWithDictionary:(NSDictionary *)dict;
+- (NSString *)hostFromURL;
+- (NSString *)pathFromURL;
+- (NSString *)statusText;
 @end
 
 @interface NLLogDetailViewController : UIViewController
