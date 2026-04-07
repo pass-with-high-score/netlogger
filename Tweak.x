@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <syslog.h>
+#import <WebKit/WebKit.h>
+#import "NLURLProtocol.h"
 
 #define LOG_FILENAME  @"com.minh.netlogger.logs.txt"
 #define NL_DOMAIN     CFSTR("com.minh.netlogger")
@@ -26,7 +28,7 @@ static NSString *getLogPath() {
     return path;
 }
 
-static void appendLine(NSString *text) {
+void appendLine(NSString *text) {
     NSString *logPath = getLogPath();
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:logPath]) {
@@ -54,12 +56,22 @@ static void appendLine(NSString *text) {
 // ---------------------------------------------------------------------------
 
 static NSDictionary *readPrefs() {
-    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist"];
-    if (d) return d;
+    static NSDictionary *cachedPrefs = nil;
+    static NSTimeInterval lastReadTime = 0;
     
-    d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist"];
-    if (d) return d;
-
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (cachedPrefs && (now - lastReadTime < 2.0)) {
+        return cachedPrefs;
+    }
+    
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist"];
+    if (!d) d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist"];
+    
+    if (d) {
+        cachedPrefs = d;
+        lastReadTime = now;
+        return d;
+    }
 
     CFPreferencesAppSynchronize(NL_DOMAIN);
     NSMutableDictionary *r = [NSMutableDictionary dictionary];
@@ -69,10 +81,13 @@ static NSDictionary *readPrefs() {
     if (en)   r[@"enabled"]      = (__bridge_transfer id)en;
     if (apps) r[@"selectedApps"] = (__bridge_transfer id)apps;
     if (bl)   r[@"blacklistedDomains"] = (__bridge_transfer id)bl;
-    return r.count ? r : nil;
+    
+    cachedPrefs = r.count ? r : nil;
+    lastReadTime = now;
+    return cachedPrefs;
 }
 
-static BOOL isAppEnabled() {
+BOOL isAppEnabled(void) {
     NSDictionary *prefs = readPrefs();
     if (![prefs[@"enabled"] boolValue]) return NO;
     NSArray *sel = prefs[@"selectedApps"];
@@ -128,7 +143,7 @@ static id parseValue(NSString *valueStr) {
 }
 
 // Áp dụng tất cả MitM rules lên response data
-static NSData *applyMitmRules(NSData *originalData, NSURLRequest *request) {
+NSData *applyMitmRules(NSData *originalData, NSURLRequest *request) {
     if (!originalData || !request.URL) return originalData;
     
     NSArray *rules = readMitmRules();
@@ -183,7 +198,7 @@ static NSData *applyMitmRules(NSData *originalData, NSURLRequest *request) {
 // Build log entry
 // ---------------------------------------------------------------------------
 
-static NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *response, double durationMs) {
+NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *response, double durationMs) {
     if (!request || !request.URL) return nil;
     
     // Check blacklist
@@ -372,6 +387,126 @@ static const char kProxyKey = 0;
 %end
 
 // ---------------------------------------------------------------------------
+// NSURLConnection hooks (Legacy API — used by older apps & SDKs)
+// ---------------------------------------------------------------------------
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+%hook NSURLConnection
+
+// ── Synchronous request ─────────────────────────────────────────────────────
++ (NSData *)sendSynchronousRequest:(NSURLRequest *)request
+                 returningResponse:(NSURLResponse **)response
+                             error:(NSError **)error {
+    if (!isAppEnabled()) return %orig;
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    NSData *data = %orig;
+    double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
+    NSURLResponse *resp = response ? *response : nil;
+    NSData *finalData = (data != nil) ? applyMitmRules(data, request) : data;
+    NSString *entry = buildEntry(request, finalData, resp, durationMs);
+    if (entry) appendLine(entry);
+    // Nếu MitM đã sửa data, phải trả lại data mới cho app
+    if (finalData != data && response) {
+        return finalData;
+    }
+    return data;
+}
+
+// ── Asynchronous request ────────────────────────────────────────────────────
++ (void)sendAsynchronousRequest:(NSURLRequest *)request
+                          queue:(NSOperationQueue *)queue
+              completionHandler:(void (^)(NSURLResponse *, NSData *, NSError *))handler {
+    if (!isAppEnabled()) { %orig; return; }
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    void (^wrapped)(NSURLResponse *, NSData *, NSError *) =
+        ^(NSURLResponse *resp, NSData *data, NSError *err) {
+            double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
+            NSData *finalData = (err == nil && data != nil) ? applyMitmRules(data, request) : data;
+            NSString *entry = buildEntry(request, finalData, resp, durationMs);
+            if (entry) appendLine(entry);
+            if (handler) handler(resp, finalData, err);
+        };
+    %orig(request, queue, wrapped);
+}
+
+%end
+
+#pragma clang diagnostic pop
+
+// ---------------------------------------------------------------------------
+// WKWebView hooks (Web-based apps: Discord, Slack, etc.)
+// ---------------------------------------------------------------------------
+
+%hook WKWebView
+
+static BOOL isRegisteringProtocol = NO;
+
+// ── Override handlesURLScheme để bypass giới hạn của registerSchemeForCustomProtocol ──
++ (BOOL)handlesURLScheme:(NSString *)urlScheme {
+    if (isRegisteringProtocol) {
+        NSString *lower = [urlScheme lowercaseString];
+        if ([lower isEqualToString:@"http"] || [lower isEqualToString:@"https"]) {
+            return NO; // Lừa WebKit rằng nó không tự handle http/https, để nó cho phép Custom Protocol
+        }
+    }
+    return %orig;
+}
+
+// ── loadRequest — bắt mọi request chính mà WebView load ─────────────────────
+- (WKNavigation *)loadRequest:(NSURLRequest *)request {
+    if (isAppEnabled() && request.URL) {
+        NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+        dict[@"id"] = [[NSUUID UUID] UUIDString];
+        dict[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
+        dict[@"method"] = request.HTTPMethod ?: @"GET";
+        dict[@"url"] = request.URL.absoluteString ?: @"(unknown)";
+        dict[@"status"] = @(0); // WebView không có status ngay lúc load
+        dict[@"app"] = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        dict[@"duration_ms"] = @(0);
+        dict[@"req_headers"] = request.allHTTPHeaderFields ?: @{};
+        // Đánh dấu nguồn gốc
+        dict[@"source"] = @"WKWebView";
+        
+        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
+        if (jsonData) {
+            appendLine([[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding]);
+        }
+    }
+    return %orig;
+}
+
+// ── loadHTMLString — bắt khi app load HTML trực tiếp ────────────────────────
+- (WKNavigation *)loadHTMLString:(NSString *)string baseURL:(NSURL *)baseURL {
+    if (isAppEnabled() && baseURL) {
+        NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+        dict[@"id"] = [[NSUUID UUID] UUIDString];
+        dict[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
+        dict[@"method"] = @"WEBVIEW";
+        dict[@"url"] = baseURL.absoluteString ?: @"about:blank";
+        dict[@"status"] = @(200);
+        dict[@"app"] = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        dict[@"duration_ms"] = @(0);
+        dict[@"source"] = @"WKWebView-HTML";
+        
+        // Lưu HTML body (giới hạn 512KB)
+        if (string.length > 0 && string.length < 512 * 1024) {
+            NSData *htmlData = [string dataUsingEncoding:NSUTF8StringEncoding];
+            dict[@"res_body_base64"] = [htmlData base64EncodedStringWithOptions:0];
+        }
+        
+        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
+        if (jsonData) {
+            appendLine([[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding]);
+        }
+    }
+    return %orig;
+}
+
+%end
+
+// ---------------------------------------------------------------------------
 // Constructor diagnostic
 // ---------------------------------------------------------------------------
 
@@ -396,6 +531,28 @@ static const char kProxyKey = 0;
         NSData *d = [NSJSONSerialization dataWithJSONObject:diag options:0 error:nil];
         if (d) {
             appendLine([[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]);
+        }
+        
+        // Đăng ký toàn cục NSURLProtocol
+        [NSURLProtocol registerClass:[NLURLProtocol class]];
+        
+        // Bỏ qua Brave Browser do lõi BraveCore (Rust) xung đột trực tiếp với Custom Scheme và sẽ panic (SIGTRAP)
+        if (![bid isEqualToString:@"com.brave.ios.browser"]) {
+            // Đăng ký với WebKit (Sử dụng Private API)
+            Class cls = NSClassFromString(@"WKBrowsingContextController");
+            SEL sel = NSSelectorFromString(@"registerSchemeForCustomProtocol:");
+            if ([cls respondsToSelector:sel]) {
+                isRegisteringProtocol = YES;
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [cls performSelector:sel withObject:@"http"];
+                [cls performSelector:sel withObject:@"https"];
+                #pragma clang diagnostic pop
+                isRegisteringProtocol = NO;
+                NSLog(@"[NetLogger] Vô hiệu hoá WKWebView bảo mật ngầm thành công cho %@", bid);
+            }
+        } else {
+            NSLog(@"[NetLogger] Vô hiệu hoá WKWebView hack cho Brave để tránh Rust Panic.");
         }
     }
 }
