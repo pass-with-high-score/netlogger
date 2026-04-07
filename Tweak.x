@@ -81,6 +81,105 @@ static BOOL isAppEnabled() {
 }
 
 // ---------------------------------------------------------------------------
+// MitM Response Modifier
+// ---------------------------------------------------------------------------
+
+static NSArray *readMitmRules() {
+    NSDictionary *prefs = readPrefs();
+    NSArray *rules = prefs[@"mitmRules"];
+    if (![rules isKindOfClass:[NSArray class]]) return nil;
+    return rules;
+}
+
+// Đặt giá trị vào nested key path (vd: "data.user.is_vip")
+static void setNestedValue(NSMutableDictionary *dict, NSString *keyPath, id value) {
+    NSArray *keys = [keyPath componentsSeparatedByString:@"."];
+    NSMutableDictionary *current = dict;
+    
+    for (NSUInteger i = 0; i < keys.count - 1; i++) {
+        id next = current[keys[i]];
+        if ([next isKindOfClass:[NSDictionary class]]) {
+            NSMutableDictionary *mutable = [next mutableCopy];
+            current[keys[i]] = mutable;
+            current = mutable;
+        } else {
+            return; // Path không tồn tại, bỏ qua
+        }
+    }
+    current[[keys lastObject]] = value;
+}
+
+// Parse giá trị từ string sang đúng kiểu dữ liệu
+static id parseValue(NSString *valueStr) {
+    if (!valueStr) return @"";
+    NSString *lower = [valueStr lowercaseString];
+    if ([lower isEqualToString:@"true"]) return @YES;
+    if ([lower isEqualToString:@"false"]) return @NO;
+    if ([lower isEqualToString:@"null"]) return [NSNull null];
+    
+    // Thử parse số
+    NSNumberFormatter *f = [[NSNumberFormatter alloc] init];
+    f.numberStyle = NSNumberFormatterDecimalStyle;
+    NSNumber *num = [f numberFromString:valueStr];
+    if (num) return num;
+    
+    // Mặc định là string
+    return valueStr;
+}
+
+// Áp dụng tất cả MitM rules lên response data
+static NSData *applyMitmRules(NSData *originalData, NSURLRequest *request) {
+    if (!originalData || !request.URL) return originalData;
+    
+    NSArray *rules = readMitmRules();
+    if (!rules || rules.count == 0) return originalData;
+    
+    NSString *urlString = request.URL.absoluteString;
+    BOOL matched = NO;
+    
+    // Tìm rules khớp với URL
+    NSMutableArray *matchedRules = [NSMutableArray array];
+    for (NSDictionary *rule in rules) {
+        if (![rule isKindOfClass:[NSDictionary class]]) continue;
+        if (![rule[@"enabled"] boolValue]) continue;
+        NSString *pattern = rule[@"url_pattern"];
+        if (pattern && [urlString containsString:pattern]) {
+            [matchedRules addObject:rule];
+            matched = YES;
+        }
+    }
+    
+    if (!matched) return originalData;
+    
+    // Parse JSON gốc
+    NSError *parseError = nil;
+    id jsonObj = [NSJSONSerialization JSONObjectWithData:originalData
+                                               options:NSJSONReadingMutableContainers
+                                                 error:&parseError];
+    if (parseError || ![jsonObj isKindOfClass:[NSDictionary class]]) {
+        return originalData; // Không phải JSON, bỏ qua
+    }
+    
+    NSMutableDictionary *json = (NSMutableDictionary *)jsonObj;
+    
+    // Áp dụng từng rule
+    for (NSDictionary *rule in matchedRules) {
+        NSString *keyPath = rule[@"key_path"];
+        NSString *valueStr = rule[@"new_value"];
+        if (!keyPath || keyPath.length == 0) continue;
+        
+        id newValue = parseValue(valueStr);
+        setNestedValue(json, keyPath, newValue);
+        
+        NSLog(@"[NetLogger-MitM] ✅ URL: %@ | Đổi '%@' → %@", urlString, keyPath, newValue);
+    }
+    
+    // Đóng gói lại
+    NSData *modifiedData = [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
+    return modifiedData ?: originalData;
+}
+
+// ---------------------------------------------------------------------------
 // Build log entry
 // ---------------------------------------------------------------------------
 
@@ -231,9 +330,11 @@ static const char kProxyKey = 0;
     CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     void (^h)(NSData *, NSURLResponse *, NSError *) = ^(NSData *d, NSURLResponse *r, NSError *e) {
         double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
-        NSString *entry = buildEntry(request, d, r, durationMs);
+        // MitM: Sửa response trước khi log và trả về cho app
+        NSData *finalData = (e == nil && d != nil) ? applyMitmRules(d, request) : d;
+        NSString *entry = buildEntry(request, finalData, r, durationMs);
         if (entry) appendLine(entry);
-        if (completionHandler) completionHandler(d, r, e);
+        if (completionHandler) completionHandler(finalData, r, e);
     };
     return %orig(request, h);
 }
@@ -242,12 +343,13 @@ static const char kProxyKey = 0;
                         completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
     if (!isAppEnabled()) return %orig;
     CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    NSMutableURLRequest *fakeReq = [NSMutableURLRequest requestWithURL:url];
     void (^h)(NSData *, NSURLResponse *, NSError *) = ^(NSData *d, NSURLResponse *r, NSError *e) {
         double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
-        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
-        NSString *entry = buildEntry(req, d, r, durationMs);
+        NSData *finalData = (e == nil && d != nil) ? applyMitmRules(d, fakeReq) : d;
+        NSString *entry = buildEntry(fakeReq, finalData, r, durationMs);
         if (entry) appendLine(entry);
-        if (completionHandler) completionHandler(d, r, e);
+        if (completionHandler) completionHandler(finalData, r, e);
     };
     return %orig(url, h);
 }
@@ -259,9 +361,10 @@ static const char kProxyKey = 0;
     CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     void (^h)(NSData *, NSURLResponse *, NSError *) = ^(NSData *d, NSURLResponse *r, NSError *e) {
         double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
-        NSString *entry = buildEntry(request, d, r, durationMs);
+        NSData *finalData = (e == nil && d != nil) ? applyMitmRules(d, request) : d;
+        NSString *entry = buildEntry(request, finalData, r, durationMs);
         if (entry) appendLine(entry);
-        if (completionHandler) completionHandler(d, r, e);
+        if (completionHandler) completionHandler(finalData, r, e);
     };
     return %orig(request, bodyData, h);
 }

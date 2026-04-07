@@ -1,0 +1,8 @@
+Origin: NetLogger Repository
+Label: NetLogger Repo
+Suite: stable
+Version: 1.0
+Codename: netlogger
+Architectures: iphoneos-arm iphoneos-arm64 iphoneos-arm64e
+Components: main
+Description: Official repository for NetLogger Tweak

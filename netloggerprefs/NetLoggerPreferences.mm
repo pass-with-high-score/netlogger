@@ -543,6 +543,9 @@ __attribute__((constructor)) static void loadAltList() {
     
     CFPropertyListRef blacklist = CFPreferencesCopyAppValue(CFSTR("blacklistedDomains"), CFSTR("com.minh.netlogger"));
     if (blacklist) { settings[@"blacklistedDomains"] = (__bridge_transfer id)blacklist; }
+    
+    CFPropertyListRef mitm = CFPreferencesCopyAppValue(CFSTR("mitmRules"), CFSTR("com.minh.netlogger"));
+    if (mitm) { settings[@"mitmRules"] = (__bridge_transfer id)mitm; }
 
     NSString *path = @"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist";
     [settings writeToFile:path atomically:YES];

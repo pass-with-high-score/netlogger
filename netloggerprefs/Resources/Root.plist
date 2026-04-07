@@ -87,6 +87,26 @@
 			<string>e.g. tracking.com, analytics.net</string>
 		</dict>
 
+		<!-- ======== MITM RULES ======== -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Advanced</string>
+			<key>footerText</key>
+			<string>Man-in-the-Middle: Modify API responses in real-time.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>MitM Response Rules</string>
+			<key>detail</key>
+			<string>NLMitmRulesController</string>
+			<key>isController</key>
+			<true/>
+		</dict>
+
 		<!-- ======== LOGS ======== -->
 		<dict>
 			<key>cell</key>
