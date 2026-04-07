@@ -182,6 +182,14 @@
         [self presentViewController:activity animated:YES completion:nil];
     }]];
     
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Block Domain" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self blockDomain];
+    }]];
+    
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Export Raw Response (.bin)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self exportBinaryResponse];
+    }]];
+    
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     
     if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
@@ -229,6 +237,48 @@
             }];
         });
     }] resume];
+}
+
+- (void)exportBinaryResponse {
+    if (!self.logEntry.resBodyBase64 || self.logEntry.resBodyBase64.length == 0) {
+        [self showToast:@"No Response Body"];
+        return;
+    }
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:self.logEntry.resBodyBase64 options:0];
+    if (!data) return;
+    
+    NSString *fileName = [NSString stringWithFormat:@"/var/mobile/Downloads/dump_%ld.bin", (long)[[NSDate date] timeIntervalSince1970]];
+    [data writeToFile:fileName atomically:YES];
+    
+    // Attempt to open Filza directly
+    NSURL *filzaUrl = [NSURL URLWithString:[NSString stringWithFormat:@"filza://%@", fileName]];
+    if ([[UIApplication sharedApplication] canOpenURL:filzaUrl]) {
+        [[UIApplication sharedApplication] openURL:filzaUrl options:@{} completionHandler:nil];
+    } else {
+        [self showToast:@"Saved to Downloads!"];
+    }
+}
+
+- (void)blockDomain {
+    if (!self.logEntry || !self.logEntry.url) return;
+    NSURL *u = [NSURL URLWithString:self.logEntry.url];
+    if (!u || !u.host) return;
+    NSString *host = u.host;
+    
+    CFPreferencesAppSynchronize(CFSTR("com.minh.netlogger"));
+    CFPropertyListRef ref = CFPreferencesCopyAppValue(CFSTR("blacklistedDomains"), CFSTR("com.minh.netlogger"));
+    NSString *current = ref ? (__bridge_transfer NSString *)ref : @"";
+    NSString *newBlacklist = current.length > 0 ? [NSString stringWithFormat:@"%@, %@", current, host] : host;
+    
+    CFPreferencesSetAppValue(CFSTR("blacklistedDomains"), (__bridge CFStringRef)newBlacklist, CFSTR("com.minh.netlogger"));
+    CFPreferencesAppSynchronize(CFSTR("com.minh.netlogger"));
+    
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist"] ?: [NSMutableDictionary dictionary];
+    dict[@"blacklistedDomains"] = newBlacklist;
+    [dict writeToFile:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist" atomically:YES];
+    [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions: @(0644)} ofItemAtPath:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist" error:nil];
+    
+    [self showToast:[NSString stringWithFormat:@"Blocked %@", host]];
 }
 
 - (void)showToast:(NSString *)message {
@@ -281,7 +331,11 @@
         result = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     }
     
-    if (!result) return [NSString stringWithFormat:@"(Binary data, %lu bytes)", (unsigned long)data.length];
+    if (!result) {
+        NSUInteger peekLen = MIN(data.length, (NSUInteger)256);
+        NSData *peekData = [data subdataWithRange:NSMakeRange(0, peekLen)];
+        return [NSString stringWithFormat:@"(Binary Data - %lu bytes)\n\nHex Dump (First %lu bytes):\n%@\n\nUse 'Export Raw Response' in Options menu to save full file.", (unsigned long)data.length, (unsigned long)peekLen, [peekData description]];
+    }
     
     // Truncate to prevent UI lag on massive bodies
     static const NSUInteger kMaxDisplayLength = 8000;
@@ -371,6 +425,17 @@
         }
         
         NSString *body = [self decodeBase64:e.resBodyBase64];
+        
+        NSString *contentType = e.resHeaders[@"Content-Type"] ?: e.resHeaders[@"content-type"];
+        contentType = [contentType lowercaseString];
+        BOOL isMedia = ([contentType hasPrefix:@"image/"] || [contentType hasPrefix:@"video/"] || [contentType hasPrefix:@"audio/"]);
+        if (isMedia && e.resBodyBase64.length > 0) {
+            [sections addObject:@{
+                @"title": @"Media Preview",
+                @"rows": @[@{@"value": @"Tap to preview media 🖼️/🎬", @"action": @"previewMedia", @"contentType": contentType}]
+            }];
+        }
+        
         if (body) {
             [sections addObject:@{
                 @"title": @"Body",
@@ -469,6 +534,13 @@
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     
     NSDictionary *row = self.currentSections[indexPath.section][@"rows"][indexPath.row];
+    
+    NSString *action = row[@"action"];
+    if (action && [action isEqualToString:@"previewMedia"]) {
+        [self previewMedia:row[@"contentType"]];
+        return;
+    }
+    
     NSString *value = row[@"value"];
     if (!value) return;
     
@@ -485,6 +557,61 @@
             cell.backgroundColor = origColor;
         }];
     });
+}
+
+- (void)previewMedia:(NSString *)contentType {
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:self.logEntry.resBodyBase64 options:0];
+    if (!data) return;
+    
+    if ([contentType hasPrefix:@"image/"]) {
+        UIImage *img = [UIImage imageWithData:data];
+        if (!img) { [self showToast:@"Invalid Image Data"]; return; }
+        
+        UIViewController *vc = [[UIViewController alloc] init];
+        if (@available(iOS 13.0, *)) {
+            vc.view.backgroundColor = [UIColor systemBackgroundColor];
+        } else {
+            vc.view.backgroundColor = [UIColor whiteColor];
+        }
+        UIImageView *iv = [[UIImageView alloc] initWithImage:img];
+        iv.contentMode = UIViewContentModeScaleAspectFit;
+        // Support dynamic resizing
+        iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        iv.frame = vc.view.bounds;
+        [vc.view addSubview:iv];
+        
+        [self.navigationController pushViewController:vc animated:YES];
+    } else {
+        // Video / Audio
+        NSString *ext = @"mp4";
+        if ([contentType containsString:@"mpeg"]) ext = @"mp3";
+        else if ([contentType containsString:@"wav"]) ext = @"wav";
+        else if ([contentType containsString:@"m4a"]) ext = @"m4a";
+        else if ([contentType containsString:@"mov"]) ext = @"mov";
+        
+        NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"preview_%ld.%@", (long)[[NSDate date] timeIntervalSince1970], ext]];
+        [data writeToFile:path atomically:YES];
+        NSURL *url = [NSURL fileURLWithPath:path];
+        
+        [[NSBundle bundleWithPath:@"/System/Library/Frameworks/AVFoundation.framework"] load];
+        [[NSBundle bundleWithPath:@"/System/Library/Frameworks/AVKit.framework"] load];
+        
+        Class AVPlayerViewControllerClass = NSClassFromString(@"AVPlayerViewController");
+        Class AVPlayerClass = NSClassFromString(@"AVPlayer");
+        if (AVPlayerViewControllerClass && AVPlayerClass) {
+            id player = [AVPlayerClass performSelector:@selector(playerWithURL:) withObject:url];
+            UIViewController *playerVC = [[AVPlayerViewControllerClass alloc] init];
+            [playerVC setValue:player forKey:@"player"];
+            [self presentViewController:playerVC animated:YES completion:^{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [player performSelector:@selector(play)];
+#pragma clang diagnostic pop
+            }];
+        } else {
+            [self showToast:@"Cannot play media on this iOS."];
+        }
+    }
 }
 
 @end
