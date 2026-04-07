@@ -174,7 +174,12 @@ __attribute__((constructor)) static void loadAltList() {
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     df.dateFormat = @"HH:mm:ss";
     NSDate *d = [NSDate dateWithTimeIntervalSince1970:entry.timestamp];
-    self.metaLabel.text = [NSString stringWithFormat:@"%@  •  %@", [df stringFromDate:d], entry.app ?: @"?"];
+    
+    NSString *durText = @"—";
+    if ([entry respondsToSelector:@selector(durationText)]) {
+        durText = [entry durationText];
+    }
+    self.metaLabel.text = [NSString stringWithFormat:@"%@  •  %@  •  %@", [df stringFromDate:d], entry.app ?: @"?", durText];
 }
 
 @end
@@ -183,11 +188,14 @@ __attribute__((constructor)) static void loadAltList() {
 // Log Viewer Controller
 // ---------------------------------------------------------------------------
 
-@interface NetLoggerLogViewerController : PSViewController <UITableViewDelegate, UITableViewDataSource, UISearchResultsUpdating>
+@interface NetLoggerLogViewerController : PSViewController <UITableViewDelegate, UITableViewDataSource, UISearchResultsUpdating, UISearchBarDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) NSMutableArray<NLLogEntry *> *allLogs;
 @property (nonatomic, strong) NSMutableArray<NLLogEntry *> *filteredLogs;
 @property (nonatomic, strong) UISearchController *searchController;
+@property (nonatomic, strong) NSTimer *autoRefreshTimer;
+@property (nonatomic, assign) BOOL isAutoRefreshEnabled;
+@property (nonatomic, strong) UIBarButtonItem *autoRefreshBtn;
 @end
 
 @implementation NetLoggerLogViewerController
@@ -220,21 +228,30 @@ __attribute__((constructor)) static void loadAltList() {
     self.searchController.searchResultsUpdater = self;
     self.searchController.obscuresBackgroundDuringPresentation = NO;
     self.searchController.searchBar.placeholder = @"Filter by URL, method, app...";
+    self.searchController.searchBar.delegate = self;
+    self.searchController.searchBar.scopeButtonTitles = @[@"All", @"2xx", @"3xx", @"4xx+", @"Err"];
     self.navigationItem.searchController = self.searchController;
     self.navigationItem.hidesSearchBarWhenScrolling = YES;
     self.definesPresentationContext = YES;
 
     // ── Nav Bar Buttons ──
+    self.autoRefreshBtn = [[UIBarButtonItem alloc]
+        initWithImage:[UIImage systemImageNamed:@"timer"]
+        style:UIBarButtonItemStylePlain
+        target:self action:@selector(toggleAutoRefresh)];
+        
     UIBarButtonItem *refreshBtn = [[UIBarButtonItem alloc]
         initWithImage:[UIImage systemImageNamed:@"arrow.clockwise"]
         style:UIBarButtonItemStylePlain
         target:self action:@selector(reloadLogs)];
+        
     UIBarButtonItem *clearBtn = [[UIBarButtonItem alloc]
         initWithImage:[UIImage systemImageNamed:@"trash"]
         style:UIBarButtonItemStylePlain
         target:self action:@selector(clearLog)];
     clearBtn.tintColor = [UIColor systemRedColor];
-    self.navigationItem.rightBarButtonItems = @[clearBtn, refreshBtn];
+    
+    self.navigationItem.rightBarButtonItems = @[clearBtn, self.autoRefreshBtn, refreshBtn];
     
     // ── Pull-to-Refresh ──
     UIRefreshControl *rc = [[UIRefreshControl alloc] init];
@@ -242,6 +259,28 @@ __attribute__((constructor)) static void loadAltList() {
     self.tableView.refreshControl = rc;
 
     [self reloadLogs];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    if (self.autoRefreshTimer) {
+        [self.autoRefreshTimer invalidate];
+        self.autoRefreshTimer = nil;
+    }
+    self.isAutoRefreshEnabled = NO;
+    self.autoRefreshBtn.tintColor = nil;
+}
+
+- (void)toggleAutoRefresh {
+    self.isAutoRefreshEnabled = !self.isAutoRefreshEnabled;
+    if (self.isAutoRefreshEnabled) {
+        self.autoRefreshBtn.tintColor = [UIColor systemGreenColor];
+        self.autoRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:3.0 target:self selector:@selector(reloadLogs) userInfo:nil repeats:YES];
+    } else {
+        self.autoRefreshBtn.tintColor = nil;
+        [self.autoRefreshTimer invalidate];
+        self.autoRefreshTimer = nil;
+    }
 }
 
 // viewWillAppear intentionally does NOT reload to preserve scroll position
@@ -300,25 +339,44 @@ __attribute__((constructor)) static void loadAltList() {
 
 - (void)applyFilter {
     NSString *query = self.searchController.searchBar.text;
-    if (query.length == 0) {
-        self.filteredLogs = [self.allLogs mutableCopy];
-    } else {
-        NSMutableArray *results = [NSMutableArray array];
-        NSString *lower = [query lowercaseString];
-        for (NLLogEntry *e in self.allLogs) {
-            if ([e.url.lowercaseString containsString:lower] ||
-                [e.method.lowercaseString containsString:lower] ||
-                [e.app.lowercaseString containsString:lower]) {
-                [results addObject:e];
-            }
+    NSInteger scope = self.searchController.searchBar.selectedScopeButtonIndex;
+    
+    NSMutableArray *results = [NSMutableArray array];
+    NSString *lower = [query lowercaseString];
+    
+    for (NLLogEntry *e in self.allLogs) {
+        // Scope Check
+        // 0=All, 1=2xx, 2=3xx, 3=4xx+, 4=Err
+        BOOL scopeMatch = YES;
+        if (scope == 1) { scopeMatch = (e.status >= 200 && e.status < 300); }
+        else if (scope == 2) { scopeMatch = (e.status >= 300 && e.status < 400); }
+        else if (scope == 3) { scopeMatch = (e.status >= 400); }
+        else if (scope == 4) { scopeMatch = (e.status == 0); }
+        
+        if (!scopeMatch) continue;
+        
+        // Text Check
+        BOOL textMatch = YES;
+        if (query.length > 0) {
+            textMatch = ([e.url.lowercaseString containsString:lower] ||
+                         [e.method.lowercaseString containsString:lower] ||
+                         [e.app.lowercaseString containsString:lower]);
         }
-        self.filteredLogs = results;
+        
+        if (textMatch) {
+            [results addObject:e];
+        }
     }
+    self.filteredLogs = results;
     
     [self.tableView reloadData];
     
     // Update title with count
     self.title = [NSString stringWithFormat:@"Logs (%lu)", (unsigned long)self.filteredLogs.count];
+}
+
+- (void)searchBar:(UISearchBar *)searchBar selectedScopeButtonIndexDidChange:(NSInteger)selectedScope {
+    [self applyFilter];
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +482,24 @@ __attribute__((constructor)) static void loadAltList() {
     [self.navigationController pushViewController:vc animated:YES];
 }
 
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
+    return YES;
+}
+
+- (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (editingStyle == UITableViewCellEditingStyleDelete) {
+        NLLogEntry *entry = self.filteredLogs[indexPath.row];
+        [self.allLogs removeObject:entry];
+        [self.filteredLogs removeObject:entry];
+        [tableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
+        
+        // Update Title
+        self.title = [NSString stringWithFormat:@"Logs (%lu)", (unsigned long)self.filteredLogs.count];
+        
+        // NOTE: Swipe-to-delete memory-only for now unless we rewrite files. Wait to see if user needs persistent delete.
+    }
+}
+
 @end
 
 // ---------------------------------------------------------------------------
@@ -464,6 +540,9 @@ __attribute__((constructor)) static void loadAltList() {
 
     CFPropertyListRef apps = CFPreferencesCopyAppValue(CFSTR("selectedApps"), CFSTR("com.minh.netlogger"));
     if (apps) { settings[@"selectedApps"] = (__bridge_transfer id)apps; }
+    
+    CFPropertyListRef blacklist = CFPreferencesCopyAppValue(CFSTR("blacklistedDomains"), CFSTR("com.minh.netlogger"));
+    if (blacklist) { settings[@"blacklistedDomains"] = (__bridge_transfer id)blacklist; }
 
     NSString *path = @"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist";
     [settings writeToFile:path atomically:YES];

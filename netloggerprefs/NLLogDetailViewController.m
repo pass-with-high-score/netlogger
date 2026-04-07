@@ -14,6 +14,7 @@
         _url = dict[@"url"];
         _status = [dict[@"status"] integerValue];
         _app = dict[@"app"];
+        _durationMs = [dict[@"duration_ms"] doubleValue];
         _reqHeaders = dict[@"req_headers"];
         _reqBodyBase64 = dict[@"req_body_base64"];
         _resHeaders = dict[@"res_headers"];
@@ -37,6 +38,35 @@
 - (NSString *)statusText {
     if (self.status == 0) return @"—";
     return [NSString stringWithFormat:@"%ld", (long)self.status];
+}
+
+- (NSString *)durationText {
+    if (self.durationMs <= 0) return @"—";
+    if (self.durationMs < 1000) return [NSString stringWithFormat:@"%.0f ms", self.durationMs];
+    return [NSString stringWithFormat:@"%.2f s", self.durationMs / 1000.0];
+}
+
+- (NSString *)toCurlCommand {
+    NSMutableString *curl = [NSMutableString stringWithFormat:@"curl -X %@ '%@'", self.method ?: @"GET", self.url ?: @""];
+    
+    for (NSString *key in self.reqHeaders) {
+        NSString *val = [NSString stringWithFormat:@"%@", self.reqHeaders[key]];
+        val = [val stringByReplacingOccurrencesOfString:@"'" withString:@"'\\'"];
+        [curl appendFormat:@" \\ \n  -H '%@: %@'", key, val];
+    }
+    
+    if (self.reqBodyBase64.length > 0) {
+        NSData *data = [[NSData alloc] initWithBase64EncodedString:self.reqBodyBase64 options:0];
+        if (data) {
+            NSString *body = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            if (body) {
+                body = [body stringByReplacingOccurrencesOfString:@"'" withString:@"'\\'"];
+                [curl appendFormat:@" \\ \n  --data '%@'", body];
+            }
+        }
+    }
+    
+    return curl;
 }
 
 @end
@@ -64,12 +94,13 @@
     [self.segmentedControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
     self.navigationItem.titleView = self.segmentedControl;
     
-    // --- Copy button ---
-    UIBarButtonItem *copyBtn = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"doc.on.doc"]
+    // --- Single Action Menu Button ---
+    UIBarButtonItem *actionBtn = [[UIBarButtonItem alloc]
+        initWithImage:[UIImage systemImageNamed:@"ellipsis.circle"]
         style:UIBarButtonItemStylePlain
-        target:self action:@selector(copyContent)];
-    self.navigationItem.rightBarButtonItem = copyBtn;
+        target:self action:@selector(showActions)];
+    
+    self.navigationItem.rightBarButtonItem = actionBtn;
     
     // --- Table View (grouped style) ---
     self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
@@ -103,9 +134,106 @@
     }
     [UIPasteboard generalPasteboard].string = text;
     
-    // Brief toast
+    [self showToast:@"Copied!"];
+}
+
+- (void)showActions {
+    if (!self.logEntry) return;
+
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Options" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    
+    // 1. Replay
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Replay Request" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self replayRequest];
+    }]];
+    
+    // 2. Copy Raw Content
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Copy Screen Content" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self copyContent];
+    }]];
+    
+    // 3. Copy cURL
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Copy cURL" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *curl = [self.logEntry toCurlCommand];
+        if (curl) {
+            [UIPasteboard generalPasteboard].string = curl;
+            [self showToast:@"Copied cURL!"];
+        }
+    }]];
+    
+    // 4. Share Text
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Share Log as Text" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSMutableString *text = [NSMutableString string];
+        for (NSDictionary *section in self.currentSections) {
+            [text appendFormat:@"── %@ ──\n", section[@"title"]];
+            for (NSDictionary *row in section[@"rows"]) {
+                if (row[@"label"]) {
+                    [text appendFormat:@"%@: %@\n", row[@"label"], row[@"value"]];
+                } else {
+                    [text appendFormat:@"%@\n", row[@"value"]];
+                }
+            }
+            [text appendString:@"\n"];
+        }
+        UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[text] applicationActivities:nil];
+        if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+            activity.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItem;
+        }
+        [self presentViewController:activity animated:YES completion:nil];
+    }]];
+    
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    
+    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+        sheet.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItem;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)replayRequest {
+    if (!self.logEntry || !self.logEntry.url) return;
+    NSURL *url = [NSURL URLWithString:self.logEntry.url];
+    if (!url) return;
+    
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.HTTPMethod = self.logEntry.method ?: @"GET";
+    
+    if (self.logEntry.reqHeaders) {
+        for (NSString *key in self.logEntry.reqHeaders) {
+            [req setValue:[NSString stringWithFormat:@"%@", self.logEntry.reqHeaders[key]] forHTTPHeaderField:key];
+        }
+    }
+    
+    if (self.logEntry.reqBodyBase64) {
+        req.HTTPBody = [[NSData alloc] initWithBase64EncodedString:self.logEntry.reqBodyBase64 options:0];
+    }
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Replaying" message:@"Sending request..." preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:alert animated:YES completion:nil];
+    
+    NSTimeInterval start = [[NSDate date] timeIntervalSince1970];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *res, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [alert dismissViewControllerAnimated:YES completion:^{
+                NSTimeInterval duration = ([[NSDate date] timeIntervalSince1970] - start) * 1000.0;
+                NSString *msg = @"";
+                if (err) {
+                    msg = [NSString stringWithFormat:@"Error: %@", err.localizedDescription];
+                } else {
+                    NSHTTPURLResponse *http = (NSHTTPURLResponse *)res;
+                    msg = [NSString stringWithFormat:@"Status: %ld\nDuration: %.0f ms\nBytes: %lu", (long)http.statusCode, duration, (unsigned long)data.length];
+                }
+                UIAlertController *resAlert = [UIAlertController alertControllerWithTitle:@"Replay Result" message:msg preferredStyle:UIAlertControllerStyleAlert];
+                [resAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:resAlert animated:YES completion:nil];
+            }];
+        });
+    }] resume];
+}
+
+- (void)showToast:(NSString *)message {
     UILabel *toast = [[UILabel alloc] init];
-    toast.text = @" Copied! ";
+    toast.text = [NSString stringWithFormat:@" %@ ", message];
     toast.font = [UIFont boldSystemFontOfSize:14];
     toast.textColor = [UIColor whiteColor];
     toast.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.75];
@@ -188,6 +316,7 @@
                 @{@"label": @"Path",   @"value": [e pathFromURL], @"wrap": @YES},
                 @{@"label": @"Method", @"value": e.method ?: @"—"},
                 @{@"label": @"Status", @"value": [e statusText], @"statusColor": @YES},
+                @{@"label": @"Duration", @"value": [e durationText]},
             ]
         }];
         

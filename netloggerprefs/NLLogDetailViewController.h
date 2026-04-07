@@ -7,6 +7,7 @@
 @property (nonatomic, copy) NSString *url;
 @property (nonatomic, assign) NSInteger status;
 @property (nonatomic, copy) NSString *app;
+@property (nonatomic, assign) double durationMs;
 @property (nonatomic, copy) NSDictionary *reqHeaders;
 @property (nonatomic, copy) NSString *reqBodyBase64;
 @property (nonatomic, copy) NSDictionary *resHeaders;
@@ -16,6 +17,8 @@
 - (NSString *)hostFromURL;
 - (NSString *)pathFromURL;
 - (NSString *)statusText;
+- (NSString *)durationText;
+- (NSString *)toCurlCommand;
 @end
 
 @interface NLLogDetailViewController : UIViewController

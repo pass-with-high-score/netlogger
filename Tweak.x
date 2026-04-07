@@ -65,8 +65,10 @@ static NSDictionary *readPrefs() {
     NSMutableDictionary *r = [NSMutableDictionary dictionary];
     CFPropertyListRef en   = CFPreferencesCopyAppValue(CFSTR("enabled"), NL_DOMAIN);
     CFPropertyListRef apps = CFPreferencesCopyAppValue(CFSTR("selectedApps"), NL_DOMAIN);
+    CFPropertyListRef bl   = CFPreferencesCopyAppValue(CFSTR("blacklistedDomains"), NL_DOMAIN);
     if (en)   r[@"enabled"]      = (__bridge_transfer id)en;
     if (apps) r[@"selectedApps"] = (__bridge_transfer id)apps;
+    if (bl)   r[@"blacklistedDomains"] = (__bridge_transfer id)bl;
     return r.count ? r : nil;
 }
 
@@ -82,7 +84,25 @@ static BOOL isAppEnabled() {
 // Build log entry
 // ---------------------------------------------------------------------------
 
-static NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *response) {
+static NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *response, double durationMs) {
+    if (!request || !request.URL) return nil;
+    
+    // Check blacklist
+    NSDictionary *prefs = readPrefs();
+    NSString *blacklistString = prefs[@"blacklistedDomains"];
+    if (blacklistString && blacklistString.length > 0) {
+        NSString *host = request.URL.host.lowercaseString;
+        if (host) {
+            NSArray *domains = [blacklistString componentsSeparatedByString:@","];
+            for (NSString *d in domains) {
+                NSString *trimmed = [d stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].lowercaseString;
+                if (trimmed.length > 0 && [host containsString:trimmed]) {
+                    return nil; // Blocked by blacklist
+                }
+            }
+        }
+    }
+
     NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
     
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
@@ -92,6 +112,7 @@ static NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *
     dict[@"url"] = request.URL.absoluteString ?: @"(unknown)";
     dict[@"status"] = http ? @(http.statusCode) : @(0);
     dict[@"app"] = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+    dict[@"duration_ms"] = @(durationMs);
     
     if (request.allHTTPHeaderFields) {
         dict[@"req_headers"] = request.allHTTPHeaderFields;
@@ -129,12 +150,14 @@ static NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *
 @implementation NLDelegateProxy {
     id<NSURLSessionDelegate> _real;
     NSMutableDictionary<NSNumber *, NSMutableData *> *_bodies;
+    NSMutableDictionary<NSNumber *, NSNumber *> *_startTimes;
 }
 
 - (instancetype)initWithDelegate:(id<NSURLSessionDelegate>)delegate {
     if ((self = [super init])) {
-        _real   = delegate;
-        _bodies = [NSMutableDictionary dictionary];
+        _real       = delegate;
+        _bodies     = [NSMutableDictionary dictionary];
+        _startTimes = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -149,14 +172,13 @@ static NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *
     return nil;
 }
 
-// Accumulate body chunks
 - (void)URLSession:(NSURLSession *)session
           dataTask:(NSURLSessionDataTask *)task
     didReceiveData:(NSData *)data {
     NSNumber *tid = @(task.taskIdentifier);
+    if (!_startTimes[tid]) _startTimes[tid] = @(CFAbsoluteTimeGetCurrent());
     if (!_bodies[tid]) _bodies[tid] = [NSMutableData data];
     [_bodies[tid] appendData:data];
-    // Forward to real delegate if it cares
     if ([_real respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)])
         [(id<NSURLSessionDataDelegate>)_real URLSession:session dataTask:task didReceiveData:data];
 }
@@ -166,10 +188,13 @@ static NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *
 didCompleteWithError:(NSError *)error {
     if (!error) {
         NSNumber *tid = @(task.taskIdentifier);
+        double startTime = [_startTimes[tid] doubleValue];
+        double durationMs = startTime > 0 ? (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0 : 0;
         NSString *entry = buildEntry(task.currentRequest ?: task.originalRequest,
-                                     _bodies[tid], task.response);
+                                     _bodies[tid], task.response, durationMs);
         if (entry) appendLine(entry);
         [_bodies removeObjectForKey:tid];
+        [_startTimes removeObjectForKey:tid];
     }
     if ([_real respondsToSelector:@selector(URLSession:task:didCompleteWithError:)])
         [(id<NSURLSessionTaskDelegate>)_real URLSession:session task:task didCompleteWithError:error];
@@ -203,8 +228,10 @@ static const char kProxyKey = 0;
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
     if (!isAppEnabled()) return %orig;
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     void (^h)(NSData *, NSURLResponse *, NSError *) = ^(NSData *d, NSURLResponse *r, NSError *e) {
-        NSString *entry = buildEntry(request, d, r);
+        double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
+        NSString *entry = buildEntry(request, d, r, durationMs);
         if (entry) appendLine(entry);
         if (completionHandler) completionHandler(d, r, e);
     };
@@ -214,9 +241,11 @@ static const char kProxyKey = 0;
 - (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url
                         completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
     if (!isAppEnabled()) return %orig;
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     void (^h)(NSData *, NSURLResponse *, NSError *) = ^(NSData *d, NSURLResponse *r, NSError *e) {
+        double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
         NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
-        NSString *entry = buildEntry(req, d, r);
+        NSString *entry = buildEntry(req, d, r, durationMs);
         if (entry) appendLine(entry);
         if (completionHandler) completionHandler(d, r, e);
     };
@@ -227,8 +256,10 @@ static const char kProxyKey = 0;
                                          fromData:(NSData *)bodyData
                                 completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
     if (!isAppEnabled()) return %orig;
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     void (^h)(NSData *, NSURLResponse *, NSError *) = ^(NSData *d, NSURLResponse *r, NSError *e) {
-        NSString *entry = buildEntry(request, d, r);
+        double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
+        NSString *entry = buildEntry(request, d, r, durationMs);
         if (entry) appendLine(entry);
         if (completionHandler) completionHandler(d, r, e);
     };

@@ -63,6 +63,30 @@
 			<true/>
 		</dict>
 
+		<!-- ======== BLACKLIST ======== -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Block Rules</string>
+			<key>footerText</key>
+			<string>Separate multiple domains with commas.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>detail</key>
+			<string>PSDetailController</string>
+			<key>defaults</key>
+			<string>com.minh.netlogger</string>
+			<key>key</key>
+			<string>blacklistedDomains</string>
+			<key>label</key>
+			<string>Blacklist</string>
+			<key>placeholder</key>
+			<string>e.g. tracking.com, analytics.net</string>
+		</dict>
+
 		<!-- ======== LOGS ======== -->
 		<dict>
 			<key>cell</key>
