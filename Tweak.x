@@ -176,6 +176,92 @@ static id parseValue(NSString *valueStr) {
     return valueStr;
 }
 
+// Sửa gói tin đi (Request Body / Request Header)
+NSMutableURLRequest *applyMitmRequestRules(NSMutableURLRequest *request) {
+    if (!isAppEnabled()) return request;
+    NSArray *rules = readMitmRules();
+    if (!rules.count) return request;
+    
+    NSString *urlString = request.URL.absoluteString;
+    if (!urlString) return request;
+    
+    for (NSDictionary *rule in rules) {
+        if (![rule[@"enabled"] boolValue]) continue;
+        
+        NSString *pattern = rule[@"url_pattern"];
+        NSInteger type = [rule[@"rule_type"] integerValue]; // 0: Res Body, 1: Req Body, 2: Req Header, 3: Res Header, 4: Req URL
+        
+        if (pattern.length > 0 && [urlString containsString:pattern]) {
+            NSString *key = rule[@"key_path"];
+            NSString *val = rule[@"new_value"];
+            
+            if (type == 1 && request.HTTPBody && key.length > 0) { // Request Body
+                id json = [NSJSONSerialization JSONObjectWithData:request.HTTPBody options:NSJSONReadingMutableContainers error:nil];
+                if ([json isKindOfClass:[NSMutableDictionary class]]) {
+                    setNestedValue((NSMutableDictionary *)json, key, val);
+                    NSData *newData = [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
+                    if (newData) request.HTTPBody = newData;
+                }
+            }
+            else if (type == 2 && key.length > 0) { // Request Header
+                [request setValue:val forHTTPHeaderField:key];
+            }
+            else if (type == 4 && key.length > 0) { // Request URL Rewrite
+                if (!val) val = @""; // Ngừa lỗi nil
+                NSString *newUrlString = [urlString stringByReplacingOccurrencesOfString:key withString:val];
+                NSURL *newURL = [NSURL URLWithString:newUrlString];
+                if (newURL) {
+                    request.URL = newURL;
+                    urlString = newUrlString; // Cập nhật để rule sau (nếu có) chồng lên tiếp
+                }
+            }
+        }
+    }
+    return request;
+}
+
+// Sửa Header gói tin về (Response Header)
+NSURLResponse *applyMitmResponseRules(NSURLResponse *response, NSURLRequest *request) {
+    if (!isAppEnabled() || ![response isKindOfClass:[NSHTTPURLResponse class]]) return response;
+    NSArray *rules = readMitmRules();
+    if (!rules.count) return response;
+    
+    NSString *urlString = request.URL.absoluteString ?: response.URL.absoluteString;
+    if (!urlString) return response;
+    
+    NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)response;
+    NSMutableDictionary *headers = [httpRes.allHeaderFields mutableCopy] ?: [NSMutableDictionary dictionary];
+    BOOL modified = NO;
+    
+    for (NSDictionary *rule in rules) {
+        if (![rule[@"enabled"] boolValue]) continue;
+        
+        NSString *pattern = rule[@"url_pattern"];
+        NSInteger type = [rule[@"rule_type"] integerValue];
+        
+        if (pattern.length > 0 && [urlString containsString:pattern]) {
+            NSString *key = rule[@"key_path"];
+            NSString *val = rule[@"new_value"];
+            
+            if (type == 3 && key.length > 0) { // Response Header
+                if (val.length == 0) {
+                    [headers removeObjectForKey:key];
+                } else {
+                    headers[key] = val;
+                }
+                modified = YES;
+            }
+        }
+    }
+    
+    if (modified) {
+        NSHTTPURLResponse *newRes = [[NSHTTPURLResponse alloc] initWithURL:httpRes.URL statusCode:httpRes.statusCode HTTPVersion:nil headerFields:headers];
+        return newRes ?: response;
+    }
+    
+    return response;
+}
+
 // Áp dụng tất cả MitM rules lên response data
 NSData *applyMitmRules(NSData *originalData, NSURLRequest *request) {
     if (!originalData || !request.URL) return originalData;
@@ -191,6 +277,10 @@ NSData *applyMitmRules(NSData *originalData, NSURLRequest *request) {
     for (NSDictionary *rule in rules) {
         if (![rule isKindOfClass:[NSDictionary class]]) continue;
         if (![rule[@"enabled"] boolValue]) continue;
+        
+        NSInteger type = [rule[@"rule_type"] integerValue];
+        if (type != 0) continue; // Chỉ xử lý Response Body
+        
         NSString *pattern = rule[@"url_pattern"];
         if (pattern && [urlString containsString:pattern]) {
             [matchedRules addObject:rule];

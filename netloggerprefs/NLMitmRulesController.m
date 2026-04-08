@@ -18,6 +18,7 @@
     UITextField *_keyField;
     UITextField *_valueField;
     UISwitch *_enabledSwitch;
+    UISegmentedControl *_typeSegment;
 }
 
 - (void)viewDidLoad {
@@ -31,12 +32,18 @@
     
     if (!self.rule) {
         self.rule = [@{
+            @"rule_type": @0,
             @"url_pattern": @"",
             @"key_path": @"",
             @"new_value": @"true",
             @"enabled": @YES
         } mutableCopy];
     }
+    
+    _typeSegment = [[UISegmentedControl alloc] initWithItems:@[@"Res Body", @"Req Body", @"Req Head", @"Res Head", @"Req URL"]];
+    _typeSegment.apportionsSegmentWidthsByContent = YES;
+    _typeSegment.selectedSegmentIndex = [self.rule[@"rule_type"] integerValue];
+    [_typeSegment addTarget:self action:@selector(typeChanged) forControlEvents:UIControlEventValueChanged];
     
     _tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
     _tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -48,7 +55,7 @@
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
-    return s == 0 ? 3 : 1;
+    return s == 0 ? 4 : 1;
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)s {
@@ -57,11 +64,26 @@
 
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)s {
     if (s == 0) {
-        return @"URL Pattern: phần URL cần khớp (vd: /api/v1/user)\n"
-               @"Key Path: đường dẫn JSON key (vd: data.user.is_vip)\n"
-               @"New Value: giá trị mới (true/false/số/chuỗi)";
+        return @"Res/Req Body: Key Path (data.user.is_vip)\n"
+               @"Res/Req Header: Header Name (X-Signature)\n"
+               @"Req URL: Chuỗi cần tìm thay thế (Search & Replace)";
     }
     return nil;
+}
+
+- (void)typeChanged {
+    if (!_keyField || !_valueField) return;
+    NSInteger t = _typeSegment.selectedSegmentIndex;
+    if (t == 0 || t == 1) { // Body
+        _keyField.placeholder = @"Key Path (e.g. data.user.is_vip)";
+        _valueField.placeholder = @"New Value (e.g. true, 999)";
+    } else if (t == 2 || t == 3) { // Header
+        _keyField.placeholder = @"Header Name (e.g. X-Signature)";
+        _valueField.placeholder = @"Header Value (e.g. custom_token)";
+    } else if (t == 4) { // URL Rewrite
+        _keyField.placeholder = @"Replace string? (e.g. item=bronze)";
+        _valueField.placeholder = @"With string? (e.g. item=legend)";
+    }
 }
 
 - (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -82,23 +104,36 @@
         
         switch (indexPath.row) {
             case 0:
+                [cell.contentView addSubview:_typeSegment];
+                _typeSegment.translatesAutoresizingMaskIntoConstraints = NO;
+                [NSLayoutConstraint activateConstraints:@[
+                    [_typeSegment.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor constant:16],
+                    [_typeSegment.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16],
+                    [_typeSegment.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]
+                ]];
+                break;
+            case 1:
                 field.placeholder = @"URL Pattern (e.g. /api/v1/user)";
                 field.text = self.rule[@"url_pattern"];
                 _urlField = field;
+                [cell.contentView addSubview:field];
                 break;
-            case 1:
+            case 2:
                 field.placeholder = @"Key Path (e.g. data.user.is_vip)";
                 field.text = self.rule[@"key_path"];
                 _keyField = field;
+                [cell.contentView addSubview:field];
                 break;
-            case 2:
+            case 3:
                 field.placeholder = @"New Value (e.g. true, 999)";
                 field.text = self.rule[@"new_value"];
                 _valueField = field;
+                [cell.contentView addSubview:field];
                 break;
         }
         
-        [cell.contentView addSubview:field];
+        [self typeChanged];
+        
         return cell;
     } else {
         UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
@@ -125,6 +160,7 @@
     }
     
     NSDictionary *saved = @{
+        @"rule_type": @(_typeSegment.selectedSegmentIndex),
         @"url_pattern": urlPattern,
         @"key_path": keyPath,
         @"new_value": newValue,

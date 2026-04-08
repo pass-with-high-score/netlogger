@@ -144,6 +144,8 @@ static NSString *const NLProtocolHandledKey = @"NLProtocolHandledKey";
       newRequest.cachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
   }
   // ==========================================
+  
+  newRequest = applyMitmRequestRules(newRequest);
 
   self.startTime = CFAbsoluteTimeGetCurrent();
   self.mutableData = [NSMutableData data];
@@ -167,8 +169,9 @@ static NSString *const NLProtocolHandledKey = @"NLProtocolHandledKey";
 - (void)handleResponse:(NSURLResponse *)response
      completionHandler:
          (void (^)(NSURLSessionResponseDisposition))completionHandler {
-  self.response = response;
-  NSString *mime = [[response MIMEType] lowercaseString] ?: @"";
+  NSURLResponse *modifiedResponse = applyMitmResponseRules(response, self.request);
+  self.response = modifiedResponse;
+  NSString *mime = [[modifiedResponse MIMEType] lowercaseString] ?: @"";
   if ([mime containsString:@"json"] || [mime containsString:@"text"] ||
       [mime containsString:@"xml"]) {
     self.shouldBuffer = YES;
@@ -177,7 +180,7 @@ static NSString *const NLProtocolHandledKey = @"NLProtocolHandledKey";
   }
 
   [self.client URLProtocol:self
-        didReceiveResponse:response
+        didReceiveResponse:modifiedResponse
         cacheStoragePolicy:NSURLCacheStorageNotAllowed];
   completionHandler(NSURLSessionResponseAllow);
 }
@@ -207,8 +210,9 @@ static NSString *const NLProtocolHandledKey = @"NLProtocolHandledKey";
 
     double durationMs = (CFAbsoluteTimeGetCurrent() - self.startTime) * 1000.0;
     NSData *logData = self.shouldBuffer ? (finalData ?: self.mutableData) : nil;
+    NSURLRequest *reqToLog = self.task.currentRequest ?: self.request;
     NSString *entry =
-        buildEntry(self.request, logData, self.response, durationMs);
+        buildEntry(reqToLog, logData, self.response, durationMs);
     if (entry) {
       appendLine(entry);
     }
