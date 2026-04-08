@@ -583,6 +583,12 @@ __attribute__((constructor)) static void loadAltList() {
     
     CFPropertyListRef mitm = CFPreferencesCopyAppValue(CFSTR("mitmRules"), CFSTR("com.minh.netlogger"));
     if (mitm) { settings[@"mitmRules"] = (__bridge_transfer id)mitm; }
+    
+    CFPropertyListRef nocache = CFPreferencesCopyAppValue(CFSTR("noCachingEnabled"), CFSTR("com.minh.netlogger"));
+    if (nocache) { settings[@"noCachingEnabled"] = (__bridge_transfer id)nocache; }
+    
+    CFPropertyListRef socketCapture = CFPreferencesCopyAppValue(CFSTR("socketCaptureEnabled"), CFSTR("com.minh.netlogger"));
+    if (socketCapture) { settings[@"socketCaptureEnabled"] = (__bridge_transfer id)socketCapture; }
 
     NSString *path = @"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist";
     [settings writeToFile:path atomically:YES];

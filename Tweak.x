@@ -5,6 +5,9 @@
 #import <Security/SecureTransport.h>
 #import <Network/Network.h>
 #import <substrate.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
 #import "NLURLProtocol.h"
 
 // ---------------------------------------------------------------------------
@@ -105,11 +108,13 @@ static NSDictionary *readPrefs() {
     CFPropertyListRef apps = CFPreferencesCopyAppValue(CFSTR("selectedApps"), NL_DOMAIN);
     CFPropertyListRef bl   = CFPreferencesCopyAppValue(CFSTR("blacklistedDomains"), NL_DOMAIN);
     CFPropertyListRef nocache = CFPreferencesCopyAppValue(CFSTR("noCachingEnabled"), NL_DOMAIN);
+    CFPropertyListRef socketCap = CFPreferencesCopyAppValue(CFSTR("socketCaptureEnabled"), NL_DOMAIN);
     
     if (en)   r[@"enabled"]      = (__bridge_transfer id)en;
     if (apps) r[@"selectedApps"] = (__bridge_transfer id)apps;
     if (bl)   r[@"blacklistedDomains"] = (__bridge_transfer id)bl;
     if (nocache) r[@"noCachingEnabled"] = (__bridge_transfer id)nocache;
+    if (socketCap) r[@"socketCaptureEnabled"] = (__bridge_transfer id)socketCap;
     
     cachedPrefs = r.count ? r : nil;
     lastReadTime = now;
@@ -127,6 +132,11 @@ BOOL isAppEnabled(void) {
 BOOL isNoCachingEnabled(void) {
     NSDictionary *prefs = readPrefs();
     return [prefs[@"noCachingEnabled"] boolValue];
+}
+
+BOOL isSocketCaptureEnabled(void) {
+    NSDictionary *prefs = readPrefs();
+    return [prefs[@"socketCaptureEnabled"] boolValue];
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +477,174 @@ static OSStatus hook_SSLRead(SSLContextRef context, void *data, size_t dataLengt
 #pragma clang diagnostic pop
 
 // ---------------------------------------------------------------------------
+// BSD Socket Interception (TCP/UDP - Transport Layer)
+// ---------------------------------------------------------------------------
+
+// Socket address map: fd -> "ip:port"
+static NSMutableDictionary *_socketAddrMap = nil;
+// Rate limiter
+static int _socketLogCount = 0;
+static CFAbsoluteTime _socketLogWindowStart = 0;
+#define SOCKET_LOG_MAX_PER_SEC 50
+#define SOCKET_PAYLOAD_MAX 512
+
+static BOOL socketRateLimitOK(void) {
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - _socketLogWindowStart >= 1.0) {
+        _socketLogWindowStart = now;
+        _socketLogCount = 0;
+    }
+    if (_socketLogCount >= SOCKET_LOG_MAX_PER_SEC) return NO;
+    _socketLogCount++;
+    return YES;
+}
+
+static NSString *hexDump(const void *buf, size_t len) {
+    if (!buf || len == 0) return @"";
+    size_t cap = MIN(len, (size_t)SOCKET_PAYLOAD_MAX);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:cap * 3];
+    const unsigned char *bytes = (const unsigned char *)buf;
+    for (size_t i = 0; i < cap; i++) {
+        [hex appendFormat:@"%02x ", bytes[i]];
+    }
+    if (len > cap) [hex appendString:@"..."];
+    return hex;
+}
+
+static NSString *asciiPreview(const void *buf, size_t len) {
+    if (!buf || len == 0) return @"";
+    size_t cap = MIN(len, (size_t)SOCKET_PAYLOAD_MAX);
+    NSMutableString *ascii = [NSMutableString stringWithCapacity:cap];
+    const unsigned char *bytes = (const unsigned char *)buf;
+    for (size_t i = 0; i < cap; i++) {
+        [ascii appendFormat:@"%c", (bytes[i] >= 32 && bytes[i] < 127) ? bytes[i] : '.'];
+    }
+    return ascii;
+}
+
+static NSString *extractAddress(const struct sockaddr *addr) {
+    if (!addr) return @"unknown";
+    char ipStr[INET6_ADDRSTRLEN] = {0};
+    uint16_t port = 0;
+    if (addr->sa_family == AF_INET) {
+        const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
+        inet_ntop(AF_INET, &sin->sin_addr, ipStr, sizeof(ipStr));
+        port = ntohs(sin->sin_port);
+    } else if (addr->sa_family == AF_INET6) {
+        const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
+        inet_ntop(AF_INET6, &sin6->sin6_addr, ipStr, sizeof(ipStr));
+        port = ntohs(sin6->sin6_port);
+    } else {
+        return @"unknown";
+    }
+    return [NSString stringWithFormat:@"%s:%d", ipStr, port];
+}
+
+
+static NSString *getSocketType(int fd) {
+    int type = 0;
+    socklen_t len = sizeof(type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len) == 0) {
+        if (type == SOCK_DGRAM) return @"UDP";
+    }
+    return @"TCP";
+}
+
+static NSString *getRemoteAddr(int fd) {
+    if (!_socketAddrMap) return @"unknown";
+    NSString *addr = _socketAddrMap[@(fd)];
+    return addr ?: @"unknown";
+}
+
+static void logSocketEvent(NSString *method, NSString *addr, NSString *proto, const void *buf, size_t len) {
+    if (!isAppEnabled() || !isSocketCaptureEnabled()) return;
+    if (!socketRateLimitOK()) return;
+    
+    NSString *app = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+    NSString *url = [NSString stringWithFormat:@"%@://%@", [proto lowercaseString], addr];
+    NSString *hex = hexDump(buf, len);
+    NSString *ascii = asciiPreview(buf, len);
+    
+    NSDictionary *dict = @{
+        @"id": [[NSUUID UUID] UUIDString],
+        @"timestamp": @([[NSDate date] timeIntervalSince1970]),
+        @"method": method,
+        @"url": url,
+        @"status": @(0),
+        @"app": app,
+        @"source": @"BSD-Socket",
+        @"duration_ms": @(0),
+        @"req_body": hex,
+        @"res_body": ascii,
+        @"socket_bytes": @(len)
+    };
+    
+    NSData *jd = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
+    if (jd) appendLine([[NSString alloc] initWithData:jd encoding:NSUTF8StringEncoding]);
+}
+
+// 1. Hook connect()
+static int (*orig_connect)(int, const struct sockaddr *, socklen_t);
+static int hook_connect(int fd, const struct sockaddr *addr, socklen_t addrlen) {
+    if (isAppEnabled() && isSocketCaptureEnabled() && addr && (addr->sa_family == AF_INET || addr->sa_family == AF_INET6)) {
+        NSString *remote = extractAddress(addr);
+        if (!_socketAddrMap) _socketAddrMap = [NSMutableDictionary dictionary];
+        _socketAddrMap[@(fd)] = remote;
+        
+        NSString *proto = getSocketType(fd);
+        NSString *method = [NSString stringWithFormat:@"%@-CONNECT", proto];
+        logSocketEvent(method, remote, proto, NULL, 0);
+    }
+    return orig_connect(fd, addr, addrlen);
+}
+
+// 2. Hook send() - TCP outbound
+static ssize_t (*orig_send)(int, const void *, size_t, int);
+static ssize_t hook_send(int fd, const void *buf, size_t len, int flags) {
+    ssize_t ret = orig_send(fd, buf, len, flags);
+    if (ret > 0 && isAppEnabled() && isSocketCaptureEnabled() && buf) {
+        NSString *proto = getSocketType(fd);
+        NSString *method = [NSString stringWithFormat:@"%@-TX", proto];
+        logSocketEvent(method, getRemoteAddr(fd), proto, buf, (size_t)ret);
+    }
+    return ret;
+}
+
+// 3. Hook recv() - TCP inbound
+static ssize_t (*orig_recv)(int, void *, size_t, int);
+static ssize_t hook_recv(int fd, void *buf, size_t len, int flags) {
+    ssize_t ret = orig_recv(fd, buf, len, flags);
+    if (ret > 0 && isAppEnabled() && isSocketCaptureEnabled() && buf) {
+        NSString *proto = getSocketType(fd);
+        NSString *method = [NSString stringWithFormat:@"%@-RX", proto];
+        logSocketEvent(method, getRemoteAddr(fd), proto, buf, (size_t)ret);
+    }
+    return ret;
+}
+
+// 4. Hook sendto() - UDP outbound
+static ssize_t (*orig_sendto)(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
+static ssize_t hook_sendto(int fd, const void *buf, size_t len, int flags, const struct sockaddr *dest, socklen_t destlen) {
+    ssize_t ret = orig_sendto(fd, buf, len, flags, dest, destlen);
+    if (ret > 0 && isAppEnabled() && isSocketCaptureEnabled() && buf) {
+        NSString *addr = dest ? extractAddress(dest) : getRemoteAddr(fd);
+        logSocketEvent(@"UDP-TX", addr, @"UDP", buf, (size_t)ret);
+    }
+    return ret;
+}
+
+// 5. Hook recvfrom() - UDP inbound
+static ssize_t (*orig_recvfrom)(int, void *, size_t, int, struct sockaddr *, socklen_t *);
+static ssize_t hook_recvfrom(int fd, void *buf, size_t len, int flags, struct sockaddr *src, socklen_t *srclen) {
+    ssize_t ret = orig_recvfrom(fd, buf, len, flags, src, srclen);
+    if (ret > 0 && isAppEnabled() && isSocketCaptureEnabled() && buf) {
+        NSString *addr = (src && srclen && *srclen > 0) ? extractAddress(src) : getRemoteAddr(fd);
+        logSocketEvent(@"UDP-RX", addr, @"UDP", buf, (size_t)ret);
+    }
+    return ret;
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket Interception (Real-time WSS)
 // ---------------------------------------------------------------------------
 
@@ -740,6 +918,18 @@ static BOOL isRegisteringProtocol = NO;
         MSHookFunction((void *)SSLWrite, (void *)hook_SSLWrite, (void **)&orig_SSLWrite);
         MSHookFunction((void *)SSLRead, (void *)hook_SSLRead, (void **)&orig_SSLRead);
 #pragma clang diagnostic pop
+        
+        // BSD Socket Hooks (TCP/UDP Transport Layer)
+        // CHỈ hook khi user BẬT toggle — tránh Anti-Cheat game Unity/Garena phát hiện
+        // hàm connect/send/recv bị patch prologue → SIGILL crash
+        if ([prefs[@"socketCaptureEnabled"] boolValue]) {
+            MSHookFunction((void *)connect, (void *)hook_connect, (void **)&orig_connect);
+            MSHookFunction((void *)send, (void *)hook_send, (void **)&orig_send);
+            MSHookFunction((void *)recv, (void *)hook_recv, (void **)&orig_recv);
+            MSHookFunction((void *)sendto, (void *)hook_sendto, (void **)&orig_sendto);
+            MSHookFunction((void *)recvfrom, (void *)hook_recvfrom, (void **)&orig_recvfrom);
+            NSLog(@"[NetLogger] BSD Socket hooks ENABLED for %@", bid);
+        }
         
         // Tự động Quét thẻ bài Entitlement của Ứng dụng. 
         // Triệt để Bỏ qua MỌI Trình Diệt Web (Chrome, Edge, Brave...) tự build C++ Network Custom để chống Panic/SigTrap
