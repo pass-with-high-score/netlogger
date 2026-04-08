@@ -9,9 +9,8 @@
 "Select Apps to Monitor" = "Chọn App Cần Theo Dõi";
 
 "Block Rules" = "Chặn Tên Miền";
-"Separate multiple domains with commas." = "Ngăn cách nhiều tên miền bằng dấu phẩy.";
-"Blacklist" = "Danh sách đen";
-"e.g. tracking.com, analytics.net" = "vd: tracking.com, analytics.net";
+"Manage domains to exclude from network logs." = "Quản lý các tên miền muốn loại bỏ khỏi lịch sử theo dõi.";
+"Blacklisted Domains" = "Danh sách đen (Blacklist)";
 
 "Advanced" = "Nâng cao";
 "Man-in-the-Middle: Modify API responses in real-time." = "Man-in-the-Middle: Chỉnh sửa API trả về theo thời gian thực.";

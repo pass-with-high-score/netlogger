@@ -9,9 +9,8 @@
 "Select Apps to Monitor" = "Select Apps to Monitor";
 
 "Block Rules" = "Block Rules";
-"Separate multiple domains with commas." = "Separate multiple domains with commas.";
-"Blacklist" = "Blacklist";
-"e.g. tracking.com, analytics.net" = "e.g. tracking.com, analytics.net";
+"Manage domains to exclude from network logs." = "Manage domains to exclude from network logs.";
+"Blacklisted Domains" = "Blacklisted Domains";
 
 "Advanced" = "Advanced";
 "Man-in-the-Middle: Modify API responses in real-time." = "Man-in-the-Middle: Modify API responses in real-time.";

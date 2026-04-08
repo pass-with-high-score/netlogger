@@ -94,21 +94,17 @@
 			<key>label</key>
 			<string>Block Rules</string>
 			<key>footerText</key>
-			<string>Separate multiple domains with commas.</string>
+			<string>Manage domains to exclude from network logs.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSEditTextCell</string>
-			<key>detail</key>
-			<string>PSDetailController</string>
-			<key>defaults</key>
-			<string>com.minh.netlogger</string>
-			<key>key</key>
-			<string>blacklistedDomains</string>
+			<string>PSLinkCell</string>
 			<key>label</key>
-			<string>Blacklist</string>
-			<key>placeholder</key>
-			<string>e.g. tracking.com, analytics.net</string>
+			<string>Blacklisted Domains</string>
+			<key>detail</key>
+			<string>NLBlacklistController</string>
+			<key>isController</key>
+			<true/>
 		</dict>
 
 		<!-- ======== MITM RULES ======== -->

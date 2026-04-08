@@ -46,3 +46,9 @@
 "Network Traffic" = "Lưu lượng Mạng";
 "Hide" = "Ẩn";
 "Clear" = "Xóa hết";
+
+"Blacklisted Domains" = "Danh sách tên miền chặn";
+"Add Domain" = "Thêm Tên miền";
+"Enter domain to block (e.g. google-analytics.com)" = "Nhập tên miền muốn chặn (vd: ads.com)";
+"Add" = "Thêm";
+"No Blacklisted Domains" = "Chưa có tên miền nào bị chặn";

@@ -46,3 +46,9 @@
 "Network Traffic" = "Network Traffic";
 "Hide" = "Hide";
 "Clear" = "Clear";
+
+"Blacklisted Domains" = "Blacklisted Domains";
+"Add Domain" = "Add Domain";
+"Enter domain to block (e.g. google-analytics.com)" = "Enter domain to block (e.g. google-analytics.com)";
+"Add" = "Add";
+"No Blacklisted Domains" = "No Blacklisted Domains";
