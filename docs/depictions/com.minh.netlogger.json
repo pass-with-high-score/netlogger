@@ -11,16 +11,24 @@
           "class": "DepictionScreenshotsView",
           "screenshots": [
             {
-              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot1.png",
+              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot1.jpg",
               "accessibilityText": "Main Screen"
             },
             {
-              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot2.png",
+              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot2.jpg",
               "accessibilityText": "Logs Viewer"
             },
             {
-              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot3.png",
+              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot3.jpg",
               "accessibilityText": "MitM Rules"
+            },
+            {
+              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot4.jpg",
+              "accessibilityText": "Log Detail"
+            },
+            {
+              "url": "https://raw.githubusercontent.com/nqmgaming/NetLogger/main/docs/screenshots/screenshot5.jpg",
+              "accessibilityText": "Settings"
             }
           ],
           "itemCornerRadius": 8,
