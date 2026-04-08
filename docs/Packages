@@ -13,7 +13,7 @@ Section: Tweaks
 Description: Network request logger for jailbroken iOS (Dopamine rootless)
 Author: Minh
 Name: NetLogger
-Icon: https://pass-with-high-score.github.io/netlogger/CydiaIcon.png
-Depiction: https://pass-with-high-score.github.io/netlogger/depictions/com.minh.netlogger.json
-SileoDepiction: https://pass-with-high-score.github.io/netlogger/depictions/com.minh.netlogger.json
+Icon: https://repo.pwhs.app/CydiaIcon.png
+Depiction: https://repo.pwhs.app/depictions/com.minh.netlogger.json
+SileoDepiction: https://repo.pwhs.app/depictions/com.minh.netlogger.json
 
