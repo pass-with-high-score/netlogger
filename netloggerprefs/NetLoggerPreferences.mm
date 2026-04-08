@@ -517,6 +517,43 @@ __attribute__((constructor)) static void loadAltList() {
     return _specifiers;
 }
 
+- (void)openGithub {
+    NSURL *url = [NSURL URLWithString:@"https://github.com/pass-with-high-score/NetLogger"];
+    if ([[UIApplication sharedApplication] canOpenURL:url]) {
+        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+    }
+}
+
+- (NSString *)getVersion:(id)specifier {
+    return @"0.0.1+debug";
+}
+
+- (NSString *)getAuthor:(id)specifier {
+    return @"pass-with-high-score";
+}
+
+- (void)restoreSettings {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Restore Settings" message:@"Are you sure you want to restore default settings? All your configurations, selected apps, and MitM rules will be deleted." preferredStyle:UIAlertControllerStyleAlert];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Restore" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        
+        CFArrayRef keys = CFPreferencesCopyKeyList(CFSTR("com.minh.netlogger"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        if (keys) {
+            CFPreferencesSetMultiple(NULL, keys, CFSTR("com.minh.netlogger"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+            CFRelease(keys);
+        }
+        CFPreferencesAppSynchronize(CFSTR("com.minh.netlogger"));
+        
+        [[NSFileManager defaultManager] removeItemAtPath:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist" error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist" error:nil];
+        
+        [self reloadSpecifiers];
+    }]];
+    
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 // Called whenever the user changes any setting — write a /var/tmp mirror so
 // sandboxed app processes can read the current state without cfprefsd issues.
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {

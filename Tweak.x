@@ -104,9 +104,12 @@ static NSDictionary *readPrefs() {
     CFPropertyListRef en   = CFPreferencesCopyAppValue(CFSTR("enabled"), NL_DOMAIN);
     CFPropertyListRef apps = CFPreferencesCopyAppValue(CFSTR("selectedApps"), NL_DOMAIN);
     CFPropertyListRef bl   = CFPreferencesCopyAppValue(CFSTR("blacklistedDomains"), NL_DOMAIN);
+    CFPropertyListRef nocache = CFPreferencesCopyAppValue(CFSTR("noCachingEnabled"), NL_DOMAIN);
+    
     if (en)   r[@"enabled"]      = (__bridge_transfer id)en;
     if (apps) r[@"selectedApps"] = (__bridge_transfer id)apps;
     if (bl)   r[@"blacklistedDomains"] = (__bridge_transfer id)bl;
+    if (nocache) r[@"noCachingEnabled"] = (__bridge_transfer id)nocache;
     
     cachedPrefs = r.count ? r : nil;
     lastReadTime = now;
@@ -119,6 +122,11 @@ BOOL isAppEnabled(void) {
     NSArray *sel = prefs[@"selectedApps"];
     if (!sel.count) return NO;
     return [sel containsObject:[[NSBundle mainBundle] bundleIdentifier] ?: @""];
+}
+
+BOOL isNoCachingEnabled(void) {
+    NSDictionary *prefs = readPrefs();
+    return [prefs[@"noCachingEnabled"] boolValue];
 }
 
 // ---------------------------------------------------------------------------
@@ -279,68 +287,36 @@ NSString *buildEntry(NSURLRequest *request, NSData *data, NSURLResponse *respons
 }
 
 // ---------------------------------------------------------------------------
-// Delegate proxy — captures delegate-based NSURLSession traffic
-// (the common pattern in most modern apps)
+// NSURLSessionConfiguration hooks — Ensures all custom sessions inject NLURLProtocol
 // ---------------------------------------------------------------------------
 
-@interface NLDelegateProxy : NSObject <NSURLSessionDataDelegate, NSURLSessionTaskDelegate>
-- (instancetype)initWithDelegate:(id<NSURLSessionDelegate>)delegate;
-@end
+%hook NSURLSessionConfiguration
 
-@implementation NLDelegateProxy {
-    id<NSURLSessionDelegate> _real;
-    NSMutableDictionary<NSNumber *, NSMutableData *> *_bodies;
-    NSMutableDictionary<NSNumber *, NSNumber *> *_startTimes;
-}
-
-- (instancetype)initWithDelegate:(id<NSURLSessionDelegate>)delegate {
-    if ((self = [super init])) {
-        _real       = delegate;
-        _bodies     = [NSMutableDictionary dictionary];
-        _startTimes = [NSMutableDictionary dictionary];
+- (NSArray<Class> *)protocolClasses {
+    NSArray *orig = %orig;
+    if (isAppEnabled()) {
+        NSMutableArray *newClasses = [NSMutableArray arrayWithArray:orig];
+        if (![newClasses containsObject:[NLURLProtocol class]]) {
+            [newClasses insertObject:[NLURLProtocol class] atIndex:0];
+        }
+        return newClasses;
     }
-    return self;
+    return orig;
 }
 
-// Forward any selector we don't implement ourselves to the real delegate
-- (BOOL)respondsToSelector:(SEL)sel {
-    return [super respondsToSelector:sel] || [_real respondsToSelector:sel];
-}
-
-- (id)forwardingTargetForSelector:(SEL)sel {
-    if ([_real respondsToSelector:sel]) return _real;
-    return nil;
-}
-
-- (void)URLSession:(NSURLSession *)session
-          dataTask:(NSURLSessionDataTask *)task
-    didReceiveData:(NSData *)data {
-    NSNumber *tid = @(task.taskIdentifier);
-    if (!_startTimes[tid]) _startTimes[tid] = @(CFAbsoluteTimeGetCurrent());
-    if (!_bodies[tid]) _bodies[tid] = [NSMutableData data];
-    [_bodies[tid] appendData:data];
-    if ([_real respondsToSelector:@selector(URLSession:dataTask:didReceiveData:)])
-        [(id<NSURLSessionDataDelegate>)_real URLSession:session dataTask:task didReceiveData:data];
-}
-
-- (void)URLSession:(NSURLSession *)session
-              task:(NSURLSessionTask *)task
-didCompleteWithError:(NSError *)error {
-    if (!error) {
-        NSNumber *tid = @(task.taskIdentifier);
-        double startTime = [_startTimes[tid] doubleValue];
-        double durationMs = startTime > 0 ? (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0 : 0;
-        NSString *entry = buildEntry(task.currentRequest ?: task.originalRequest,
-                                     _bodies[tid], task.response, durationMs);
-        if (entry) appendLine(entry);
-        [_bodies removeObjectForKey:tid];
-        [_startTimes removeObjectForKey:tid];
+- (void)setProtocolClasses:(NSArray<Class> *)protocolClasses {
+    if (isAppEnabled()) {
+        NSMutableArray *newClasses = [NSMutableArray arrayWithArray:protocolClasses];
+        if (![newClasses containsObject:[NLURLProtocol class]]) {
+            [newClasses insertObject:[NLURLProtocol class] atIndex:0];
+        }
+        %orig(newClasses);
+    } else {
+        %orig(protocolClasses);
     }
-    if ([_real respondsToSelector:@selector(URLSession:task:didCompleteWithError:)])
-        [(id<NSURLSessionTaskDelegate>)_real URLSession:session task:task didCompleteWithError:error];
 }
 
-@end
+%end
 
 // ---------------------------------------------------------------------------
 // C-Level Hooks (Security & Network)
@@ -401,26 +377,75 @@ static OSStatus hook_SSLRead(SSLContextRef context, void *data, size_t dataLengt
 #pragma clang diagnostic pop
 
 // ---------------------------------------------------------------------------
-// NSURLSession hooks
+// WebSocket Interception (Real-time WSS)
 // ---------------------------------------------------------------------------
 
-static const char kProxyKey = 0;
+@interface NSURLSessionWebSocketMessage (Hooks)
+@property (nonatomic, readwrite, copy) NSData *data;
+@property (nonatomic, readwrite, copy) NSString *string;
+@property (nonatomic, readwrite, assign) NSInteger type;
+@end
+
+static void logWebSocketMessage(NSURLSessionTask *task, NSURLSessionWebSocketMessage *message, BOOL isOutbound) {
+    if (!isAppEnabled() || !message) return;
+    
+    NSString *app = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+    NSString *payloadStr = @"";
+    
+    // NSURLSessionWebSocketMessageTypeString = 1, Data = 0
+    if (message.type == 1 && message.string) {
+        payloadStr = message.string;
+    } else if (message.type == 0 && message.data) {
+        payloadStr = [[NSString alloc] initWithData:message.data encoding:NSUTF8StringEncoding];
+        if (!payloadStr) payloadStr = [NSString stringWithFormat:@"[Binary Data: %ld bytes]", (long)message.data.length];
+    }
+    
+    NSString *url = task.currentRequest.URL.absoluteString ?: @"wss://[Unknown-Socket]";
+    url = [NSString stringWithFormat:@"[%@] %@", isOutbound ? @"TX" : @"RX", url];
+
+    NSDictionary *dict = @{
+        @"id": [[NSUUID UUID] UUIDString],
+        @"timestamp": @([[NSDate date] timeIntervalSince1970]),
+        @"url": url,
+        @"status": @(101), // HTTP 101 Switching Protocols
+        @"method": isOutbound ? @"WSS-TX" : @"WSS-RX",
+        @"app": app,
+        @"source": @"WebSocket",
+        @"duration_ms": @(0),
+        @"req_body": isOutbound ? payloadStr : @"",
+        @"res_body": isOutbound ? @"" : payloadStr
+    };
+    
+    NSData *jd = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
+    if (jd) appendLine([[NSString alloc] initWithData:jd encoding:NSUTF8StringEncoding]);
+}
+
+%hook NSURLSessionWebSocketTask
+
+- (void)sendMessage:(NSURLSessionWebSocketMessage *)message completionHandler:(void (^)(NSError * error))completionHandler {
+    logWebSocketMessage(self, message, YES);
+    %orig;
+}
+
+- (void)receiveMessageWithCompletionHandler:(void (^)(NSURLSessionWebSocketMessage * message, NSError * error))completionHandler {
+    void (^wrapped)(NSURLSessionWebSocketMessage *, NSError *) = ^(NSURLSessionWebSocketMessage *msg, NSError *err) {
+        if (msg && !err) {
+            logWebSocketMessage(self, msg, NO);
+        }
+        if (completionHandler) {
+            completionHandler(msg, err);
+        }
+    };
+    %orig(wrapped);
+}
+
+%end
+
+// ---------------------------------------------------------------------------
+// NSURLSession hooks (for default and shared session methods)
+// ---------------------------------------------------------------------------
 
 %hook NSURLSession
-
-// ── Delegate-based sessions (most apps) ─────────────────────────────────────
-+ (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)config
-                                  delegate:(id<NSURLSessionDelegate>)delegate
-                             delegateQueue:(NSOperationQueue *)queue {
-    if (delegate && isAppEnabled()) {
-        NLDelegateProxy *proxy = [[NLDelegateProxy alloc] initWithDelegate:delegate];
-        NSURLSession *session = %orig(config, proxy, queue);
-        // Retain proxy for the session's lifetime
-        objc_setAssociatedObject(session, &kProxyKey, proxy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        return session;
-    }
-    return %orig;
-}
 
 // ── Completion-handler-based sessions (shared session, simple calls) ─────────
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
@@ -429,7 +454,6 @@ static const char kProxyKey = 0;
     CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     void (^h)(NSData *, NSURLResponse *, NSError *) = ^(NSData *d, NSURLResponse *r, NSError *e) {
         double durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
-        // MitM: Sửa response trước khi log và trả về cho app
         NSData *finalData = (e == nil && d != nil) ? applyMitmRules(d, request) : d;
         NSString *entry = buildEntry(request, finalData, r, durationMs);
         if (entry) appendLine(entry);

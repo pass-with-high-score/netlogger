@@ -133,6 +133,18 @@ static NSString *const NLProtocolHandledKey = @"NLProtocolHandledKey";
                       forKey:NLProtocolHandledKey
                    inRequest:newRequest];
 
+  // ==========================================
+  // ANTI-CACHE CỰC MẠNH: Dành riêng cho RevenueCat & Các SDK cứng đầu
+  // ==========================================
+  // Xóa sạch mọi kí hiệu ETag của RevenueCat để dụ Server nhả JSON 200 OK mới tinh
+  if (isNoCachingEnabled()) {
+      [newRequest setValue:nil forHTTPHeaderField:@"X-RevenueCat-ETag"];
+      [newRequest setValue:nil forHTTPHeaderField:@"If-None-Match"];
+      [newRequest setValue:nil forHTTPHeaderField:@"If-Modified-Since"];
+      newRequest.cachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+  }
+  // ==========================================
+
   self.startTime = CFAbsoluteTimeGetCurrent();
   self.mutableData = [NSMutableData data];
 

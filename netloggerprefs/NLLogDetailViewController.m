@@ -313,10 +313,10 @@
     return rows;
 }
 
-- (NSString *)decodeBase64:(NSString *)base64 {
+- (NSDictionary *)decodeBase64:(NSString *)base64 {
     if (!base64 || base64.length == 0) return nil;
     NSData *data = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
-    if (!data) return @"(Invalid Base64)";
+    if (!data) return @{@"display": @"(Invalid Base64)", @"raw": @"(Invalid Base64)"};
     
     NSString *result = nil;
     
@@ -334,19 +334,22 @@
     if (!result) {
         NSUInteger peekLen = MIN(data.length, (NSUInteger)256);
         NSData *peekData = [data subdataWithRange:NSMakeRange(0, peekLen)];
-        return [NSString stringWithFormat:@"(Binary Data - %lu bytes)\n\nHex Dump (First %lu bytes):\n%@\n\nUse 'Export Raw Response' in Options menu to save full file.", (unsigned long)data.length, (unsigned long)peekLen, [peekData description]];
+        NSString *s = [NSString stringWithFormat:@"(Binary Data - %lu bytes)\n\nHex Dump (First %lu bytes):\n%@\n\nUse 'Export Raw Response' in Options menu to save full file.", (unsigned long)data.length, (unsigned long)peekLen, [peekData description]];
+        return @{@"display": s, @"raw": s};
     }
     
+    NSString *rawResult = result;
+    
     // Truncate to prevent UI lag on massive bodies
-    static const NSUInteger kMaxDisplayLength = 8000;
+    static const NSUInteger kMaxDisplayLength = 20000;
     if (result.length > kMaxDisplayLength) {
-        result = [NSString stringWithFormat:@"%@\n\n── Truncated ──\nShowing %lu of %lu bytes.\nUse Copy button to get full content.",
+        result = [NSString stringWithFormat:@"%@\n\n── Truncated ──\nShowing %lu of %lu characters.\nTAP THIS BLOCK to copy FULL content to clipboard.",
             [result substringToIndex:kMaxDisplayLength],
             (unsigned long)kMaxDisplayLength,
             (unsigned long)result.length];
     }
     
-    return result;
+    return @{@"display": result, @"raw": rawResult};
 }
 
 - (void)rebuildData {
@@ -402,11 +405,11 @@
             [sections addObject:@{@"title": @"Headers", @"rows": @[@{@"value": @"No request headers captured."}]}];
         }
         
-        NSString *body = [self decodeBase64:e.reqBodyBase64];
-        if (body) {
+        NSDictionary *bodyDict = [self decodeBase64:e.reqBodyBase64];
+        if (bodyDict) {
             [sections addObject:@{
                 @"title": @"Body",
-                @"rows": @[@{@"value": body, @"mono": @YES}]
+                @"rows": @[@{@"value": bodyDict[@"display"], @"rawValue": bodyDict[@"raw"], @"mono": @YES}]
             }];
         } else {
             [sections addObject:@{@"title": @"Body", @"rows": @[@{@"value": @"No request body."}]}];
@@ -424,7 +427,7 @@
             [sections addObject:@{@"title": @"Headers", @"rows": @[@{@"value": @"No response headers captured."}]}];
         }
         
-        NSString *body = [self decodeBase64:e.resBodyBase64];
+        NSDictionary *bodyDict = [self decodeBase64:e.resBodyBase64];
         
         NSString *contentType = e.resHeaders[@"Content-Type"] ?: e.resHeaders[@"content-type"];
         contentType = [contentType lowercaseString];
@@ -436,10 +439,10 @@
             }];
         }
         
-        if (body) {
+        if (bodyDict) {
             [sections addObject:@{
                 @"title": @"Body",
-                @"rows": @[@{@"value": body, @"mono": @YES}]
+                @"rows": @[@{@"value": bodyDict[@"display"], @"rawValue": bodyDict[@"raw"], @"mono": @YES}]
             }];
         } else {
             [sections addObject:@{@"title": @"Body", @"rows": @[@{@"value": @"No response body."}]}];
@@ -541,20 +544,19 @@
         return;
     }
     
-    NSString *value = row[@"value"];
+    NSString *value = row[@"rawValue"] ?: row[@"value"];
     if (!value) return;
     
     [UIPasteboard generalPasteboard].string = value;
+    [self showToast:@"Copied!"];
     
     // Brief feedback
     UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
-    UIColor *origColor = cell.backgroundColor;
-    
-        cell.backgroundColor = [UIColor colorWithRed:0.2 green:0.8 blue:0.4 alpha:0.15];
+    cell.backgroundColor = [UIColor colorWithRed:0.2 green:0.8 blue:0.4 alpha:0.15];
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
         [UIView animateWithDuration:0.3 animations:^{
-            cell.backgroundColor = origColor;
+            cell.backgroundColor = nil;
         }];
     });
 }

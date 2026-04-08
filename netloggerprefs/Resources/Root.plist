@@ -25,6 +25,18 @@
 			<key>default</key>
 			<false/>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>Disable App Caching (No 304)</string>
+			<key>key</key>
+			<string>noCachingEnabled</string>
+			<key>defaults</key>
+			<string>com.minh.netlogger</string>
+			<key>default</key>
+			<false/>
+		</dict>
 
 		<!-- ======== APP SELECTION ======== -->
 		<dict>
@@ -124,6 +136,57 @@
 			<key>isController</key>
 			<true/>
 		</dict>
+
+		<!-- ======== ABOUT ======== -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>About</string>
+			<key>footerText</key>
+			<string>NetLogger v0.0.1 - Universal Network Interceptor.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>GitHub / Source Code ⭐️</string>
+			<key>action</key>
+			<string>openGithub</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Version</string>
+			<key>get</key>
+			<string>getVersion:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>label</key>
+			<string>Author</string>
+			<key>get</key>
+			<string>getAuthor:</string>
+		</dict>
+
+		<!-- ======== DANGER ======== -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Restore Default Settings</string>
+			<key>action</key>
+			<string>restoreSettings</string>
+			<key>alignment</key>
+			<integer>2</integer>
+		</dict>
+
 	</array>
 </dict>
 </plist>
