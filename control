@@ -7,3 +7,6 @@ Maintainer: Minh
 Author: Minh
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader, com.opa334.altlist
+Icon: https://repo.pwhs.app/CydiaIcon.png
+Depiction: https://repo.pwhs.app/depictions/com.minh.netlogger.json
+SileoDepiction: https://repo.pwhs.app/depictions/com.minh.netlogger.json
