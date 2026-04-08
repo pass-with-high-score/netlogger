@@ -1,4 +1,5 @@
 #import "NLLogDetailViewController.h"
+#import <WebKit/WebKit.h>
 
 // ---------------------------------------------------------------------------
 #pragma mark - NLLogEntry
@@ -435,7 +436,15 @@
         if (isMedia && e.resBodyBase64.length > 0) {
             [sections addObject:@{
                 @"title": @"Media Preview",
-                @"rows": @[@{@"value": @"Tap to preview media 🖼️/🎬", @"action": @"previewMedia", @"contentType": contentType}]
+                @"rows": @[@{@"value": @"Tap to preview media", @"action": @"previewMedia", @"contentType": contentType}]
+            }];
+        }
+
+        BOOL isHTML = (contentType && [contentType containsString:@"html"]);
+        if (isHTML && e.resBodyBase64.length > 0) {
+            [sections addObject:@{
+                @"title": @"HTML Preview",
+                @"rows": @[@{@"value": @"Tap to render HTML", @"action": @"previewHTML"}]
             }];
         }
         
@@ -543,6 +552,10 @@
         [self previewMedia:row[@"contentType"]];
         return;
     }
+    if (action && [action isEqualToString:@"previewHTML"]) {
+        [self previewHTML];
+        return;
+    }
     
     NSString *value = row[@"rawValue"] ?: row[@"value"];
     if (!value) return;
@@ -559,6 +572,26 @@
             cell.backgroundColor = nil;
         }];
     });
+}
+
+- (void)previewHTML {
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:self.logEntry.resBodyBase64 options:0];
+    if (!data) { [self showToast:@"No HTML Data"]; return; }
+    NSString *html = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!html) { [self showToast:@"Invalid HTML Data"]; return; }
+
+    UIViewController *vc = [[UIViewController alloc] init];
+    vc.title = @"HTML Preview";
+    vc.view.backgroundColor = [UIColor systemBackgroundColor];
+
+    WKWebView *webView = [[WKWebView alloc] initWithFrame:vc.view.bounds];
+    webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [vc.view addSubview:webView];
+
+    NSURL *baseURL = self.logEntry.url ? [NSURL URLWithString:self.logEntry.url] : nil;
+    [webView loadHTMLString:html baseURL:baseURL];
+
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 - (void)previewMedia:(NSString *)contentType {

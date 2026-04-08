@@ -297,19 +297,27 @@ __attribute__((constructor)) static void loadAltList() {
 
 - (void)reloadLogs {
     [self.allLogs removeAllObjects];
-    
+
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist"];
     NSArray *selectedApps = prefs[@"selectedApps"];
-    
+
     for (NSString *bundleID in selectedApps) {
         if (!bundleID || bundleID.length == 0) continue;
-        
-        LSApplicationProxy *proxy = [NSClassFromString(@"LSApplicationProxy") applicationProxyForIdentifier:bundleID];
-        if (!proxy || !proxy.dataContainerURL) continue;
 
-        NSString *cachesPath = [[proxy.dataContainerURL path] stringByAppendingPathComponent:@"Library/Caches"];
-        NSString *logPath = [cachesPath stringByAppendingPathComponent:@"com.minh.netlogger.logs.txt"];
-        
+        NSString *logPath = nil;
+
+        // Preference bundle chạy trong Settings.app → NSHomeDirectory() trả đúng
+        // thư mục mà tweak đã ghi log. LSApplicationProxy.dataContainerURL trả nil
+        // cho system app nên không dùng được.
+        if ([bundleID isEqualToString:@"com.apple.Preferences"]) {
+            logPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/com.minh.netlogger.logs.txt"];
+        } else {
+            LSApplicationProxy *proxy = [NSClassFromString(@"LSApplicationProxy") applicationProxyForIdentifier:bundleID];
+            if (!proxy || !proxy.dataContainerURL) continue;
+            NSString *cachesPath = [[proxy.dataContainerURL path] stringByAppendingPathComponent:@"Library/Caches"];
+            logPath = [cachesPath stringByAppendingPathComponent:@"com.minh.netlogger.logs.txt"];
+        }
+
         NSString *content = [NSString stringWithContentsOfFile:logPath encoding:NSUTF8StringEncoding error:nil];
         if (!content || content.length == 0) continue;
         
@@ -404,10 +412,15 @@ __attribute__((constructor)) static void loadAltList() {
             NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.minh.netlogger.settings.plist"];
             NSArray *selectedApps = prefs[@"selectedApps"];
             for (NSString *bundleID in selectedApps) {
-                LSApplicationProxy *proxy = [NSClassFromString(@"LSApplicationProxy") applicationProxyForIdentifier:bundleID];
-                if (!proxy || !proxy.dataContainerURL) continue;
-                NSString *cachesPath = [[proxy.dataContainerURL path] stringByAppendingPathComponent:@"Library/Caches"];
-                NSString *logPath = [cachesPath stringByAppendingPathComponent:@"com.minh.netlogger.logs.txt"];
+                NSString *logPath = nil;
+                if ([bundleID isEqualToString:@"com.apple.Preferences"]) {
+                    logPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/com.minh.netlogger.logs.txt"];
+                } else {
+                    LSApplicationProxy *proxy = [NSClassFromString(@"LSApplicationProxy") applicationProxyForIdentifier:bundleID];
+                    if (!proxy || !proxy.dataContainerURL) continue;
+                    NSString *cachesPath = [[proxy.dataContainerURL path] stringByAppendingPathComponent:@"Library/Caches"];
+                    logPath = [cachesPath stringByAppendingPathComponent:@"com.minh.netlogger.logs.txt"];
+                }
                 [@"" writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
             }
             [self reloadLogs];

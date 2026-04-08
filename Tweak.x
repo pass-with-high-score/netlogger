@@ -895,20 +895,27 @@ static BOOL isRegisteringProtocol = NO;
     NSArray *selected   = prefs[@"selectedApps"];
     BOOL thisApp        = [selected containsObject:bid];
 
-    if (masterOn && thisApp) {
-        NSDictionary *diag = @{
-            @"id": [[NSUUID UUID] UUIDString],
-            @"timestamp": @([[NSDate date] timeIntervalSince1970]),
-            @"method": @"DIAGNOSTIC",
-            @"url": [NSString stringWithFormat:@"diagnostic://app-started/%@", bid],
-            @"status": @(200),
-            @"app": bid
-        };
-        NSData *d = [NSJSONSerialization dataWithJSONObject:diag options:0 error:nil];
-        if (d) {
-            appendLine([[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]);
+    // Settings app (com.apple.Preferences) là đặc biệt: preference bundle chạy bên trong nó,
+    // nên user có thể bật masterOn + thêm Settings vào selectedApps SAU KHI process đã khởi động.
+    // → Luôn đăng ký hooks cho Settings, dùng isAppEnabled() runtime check để gate logging.
+    BOOL isSettingsApp = [bid isEqualToString:@"com.apple.Preferences"];
+
+    if ((masterOn && thisApp) || isSettingsApp) {
+        if (thisApp) {
+            NSDictionary *diag = @{
+                @"id": [[NSUUID UUID] UUIDString],
+                @"timestamp": @([[NSDate date] timeIntervalSince1970]),
+                @"method": @"DIAGNOSTIC",
+                @"url": [NSString stringWithFormat:@"diagnostic://app-started/%@", bid],
+                @"status": @(200),
+                @"app": bid
+            };
+            NSData *d = [NSJSONSerialization dataWithJSONObject:diag options:0 error:nil];
+            if (d) {
+                appendLine([[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]);
+            }
         }
-        
+
         // Đăng ký toàn cục NSURLProtocol
         [NSURLProtocol registerClass:[NLURLProtocol class]];
         

@@ -8,7 +8,7 @@ BUNDLE_NAME = NetLoggerPreferences
 NetLoggerPreferences_FILES = NetLoggerPreferences.mm NLLogDetailViewController.m NLMitmRulesController.m
 NetLoggerPreferences_INSTALL_PATH = /Library/PreferenceBundles
 NetLoggerPreferences_CFLAGS = -fobjc-arc
-NetLoggerPreferences_FRAMEWORKS = UIKit
+NetLoggerPreferences_FRAMEWORKS = UIKit WebKit
 NetLoggerPreferences_PRIVATE_FRAMEWORKS = Preferences
 NetLoggerPreferences_LDFLAGS = -F$(THEOS_SDKS_PATH)/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks
 
