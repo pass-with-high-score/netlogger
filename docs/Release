@@ -6,3 +6,13 @@ Codename: netlogger
 Architectures: iphoneos-arm iphoneos-arm64 iphoneos-arm64e
 Components: main
 Description: Official repository for NetLogger Tweak
+MD5Sum:
+ 88121904ec591ebaf0b48b49643f04d0 525 Packages
+ 2603770ea05828bf0c7eb315b84ed47c 421 Packages.bz2
+ e6d38098818258bf1a7a5964732eac01 392 Packages.gz
+ dae20869f3d5deb045d259d7c838c531 468 Packages.xz
+SHA256:
+ 67d28b654b8f036796844b0cf1ff504cd1fa99ac03935a5a9614be54b2b1d439 525 Packages
+ 32debc35fa77409b7e3dd4bc38824310766ab5dc750547fb51ab5ecf058bb331 421 Packages.bz2
+ 912143fb11f7c411fa5f31202719e613f0a45dcf15636eceb0a33bdd7473c83a 392 Packages.gz
+ 704efca50688d789c1d7a9d592ea9c18ae2f6d3f55de5a5a57d6109d37752113 468 Packages.xz
