@@ -241,11 +241,9 @@ __attribute__((constructor)) static void loadAltList() {
 
 @implementation NetLoggerLogViewerController
 
-- (void)viewDidLoad {
-  [super viewDidLoad];
-  self.title = @"Network Logs";
-  self.allLogs = [NSMutableArray array];
-  self.filteredLogs = [NSMutableArray array];
+- (void)loadView {
+  [super loadView];
+  self.view = [[UIView alloc] initWithFrame:UIScreen.mainScreen.bounds];
 
   if (@available(iOS 13.0, *)) {
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -266,6 +264,13 @@ __attribute__((constructor)) static void loadAltList() {
     self.tableView.backgroundColor = [UIColor systemBackgroundColor];
   }
   [self.view addSubview:self.tableView];
+}
+
+- (void)viewDidLoad {
+  [super viewDidLoad];
+  self.title = @"Network Logs";
+  self.allLogs = [NSMutableArray array];
+  self.filteredLogs = [NSMutableArray array];
 
   // ── Search Controller ──
   self.searchController =
@@ -644,6 +649,141 @@ __attribute__((constructor)) static void loadAltList() {
 }
 
 @end
+// ---------------------------------------------------------------------------
+#pragma mark - Icon Helper
+// ---------------------------------------------------------------------------
+
+static UIImage *iconWithSFSymbol(NSString *name, UIColor *color, CGFloat size) {
+    UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:size weight:UIImageSymbolWeightMedium];
+    UIImage *img = [[UIImage systemImageNamed:name withConfiguration:config]
+                    imageWithTintColor:[UIColor whiteColor]
+                    renderingMode:UIImageRenderingModeAlwaysOriginal];
+    
+    CGFloat boxSize = size + 8;
+    CGRect rect = CGRectMake(0, 0, boxSize, boxSize);
+    UIGraphicsBeginImageContextWithOptions(rect.size, NO, 0);
+    
+    // Rounded rect background
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:boxSize * 0.22];
+    [color setFill];
+    [path fill];
+    
+    // Center the white symbol on top
+    CGSize imgSize = [img size];
+    CGFloat x = (boxSize - imgSize.width) / 2;
+    CGFloat y = (boxSize - imgSize.height) / 2;
+    [img drawAtPoint:CGPointMake(x, y)];
+    
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [result imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+}
+
+// ---------------------------------------------------------------------------
+#pragma mark - Premium Header View
+// ---------------------------------------------------------------------------
+
+@interface NLHeaderView : UIView
+@end
+
+@implementation NLHeaderView
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = [UIColor clearColor];
+        
+        // Container with gradient
+        UIView *container = [[UIView alloc] init];
+        container.translatesAutoresizingMaskIntoConstraints = NO;
+        container.layer.cornerRadius = 16;
+        container.clipsToBounds = YES;
+        [self addSubview:container];
+        
+        // Gradient layer
+        CAGradientLayer *gradient = [CAGradientLayer layer];
+        gradient.colors = @[
+            (id)[UIColor colorWithRed:0.20 green:0.40 blue:0.90 alpha:1.0].CGColor,
+            (id)[UIColor colorWithRed:0.45 green:0.25 blue:0.85 alpha:1.0].CGColor
+        ];
+        gradient.startPoint = CGPointMake(0, 0);
+        gradient.endPoint = CGPointMake(1, 1);
+        gradient.frame = CGRectMake(0, 0, UIScreen.mainScreen.bounds.size.width - 32, 120);
+        [container.layer insertSublayer:gradient atIndex:0];
+        
+        // App icon
+        UIImageView *iconView = [[UIImageView alloc] init];
+        UIImageSymbolConfiguration *iconConfig = [UIImageSymbolConfiguration configurationWithPointSize:36 weight:UIImageSymbolWeightBold];
+        iconView.image = [UIImage systemImageNamed:@"network" withConfiguration:iconConfig];
+        iconView.tintColor = [UIColor whiteColor];
+        iconView.contentMode = UIViewContentModeScaleAspectFit;
+        iconView.translatesAutoresizingMaskIntoConstraints = NO;
+        [container addSubview:iconView];
+        
+        // App name
+        UILabel *titleLabel = [[UILabel alloc] init];
+        titleLabel.text = @"NetLogger";
+        titleLabel.font = [UIFont systemFontOfSize:26 weight:UIFontWeightBold];
+        titleLabel.textColor = [UIColor whiteColor];
+        titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        [container addSubview:titleLabel];
+        
+        // Subtitle
+        UILabel *subtitleLabel = [[UILabel alloc] init];
+        subtitleLabel.text = @"Universal Network Interceptor";
+        subtitleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        subtitleLabel.textColor = [[UIColor whiteColor] colorWithAlphaComponent:0.75];
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        [container addSubview:subtitleLabel];
+        
+        // Version badge
+        UILabel *versionLabel = [[UILabel alloc] init];
+        versionLabel.text = @" v0.0.1 ";
+        versionLabel.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightSemibold];
+        versionLabel.textColor = [UIColor whiteColor];
+        versionLabel.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2];
+        versionLabel.layer.cornerRadius = 8;
+        versionLabel.clipsToBounds = YES;
+        versionLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        [container addSubview:versionLabel];
+        
+        [NSLayoutConstraint activateConstraints:@[
+            [container.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:16],
+            [container.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-16],
+            [container.topAnchor constraintEqualToAnchor:self.topAnchor constant:8],
+            [container.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-8],
+            [container.heightAnchor constraintEqualToConstant:120],
+            
+            [iconView.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:20],
+            [iconView.centerYAnchor constraintEqualToAnchor:container.centerYAnchor constant:-4],
+            [iconView.widthAnchor constraintEqualToConstant:44],
+            [iconView.heightAnchor constraintEqualToConstant:44],
+            
+            [titleLabel.leadingAnchor constraintEqualToAnchor:iconView.trailingAnchor constant:14],
+            [titleLabel.topAnchor constraintEqualToAnchor:iconView.topAnchor constant:-2],
+            
+            [versionLabel.leadingAnchor constraintEqualToAnchor:titleLabel.trailingAnchor constant:8],
+            [versionLabel.centerYAnchor constraintEqualToAnchor:titleLabel.centerYAnchor],
+            
+            [subtitleLabel.leadingAnchor constraintEqualToAnchor:titleLabel.leadingAnchor],
+            [subtitleLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:4],
+        ]];
+    }
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    // Update gradient frame on layout
+    UIView *container = self.subviews.firstObject;
+    for (CALayer *layer in container.layer.sublayers) {
+        if ([layer isKindOfClass:[CAGradientLayer class]]) {
+            layer.frame = container.bounds;
+        }
+    }
+}
+
+@end
 
 // ---------------------------------------------------------------------------
 #pragma mark - Main Settings Controller
@@ -658,6 +798,88 @@ __attribute__((constructor)) static void loadAltList() {
   if (!_specifiers)
     _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
   return _specifiers;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    // Set tint color
+    self.view.tintColor = [UIColor colorWithRed:0.30 green:0.45 blue:0.95 alpha:1.0];
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    
+    // Add premium header
+    NLHeaderView *header = [[NLHeaderView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 136)];
+    UITableView *tv = [self valueForKey:@"_table"];
+    if (!tv) {
+        // Try finding the table view in subviews
+        for (UIView *v in self.view.subviews) {
+            if ([v isKindOfClass:[UITableView class]]) {
+                tv = (UITableView *)v;
+                break;
+            }
+        }
+    }
+    if (tv) {
+        tv.tableHeaderView = header;
+    }
+    
+    // Style specifier cells with icons
+    [self addIconsToSpecifiers];
+}
+
+- (void)addIconsToSpecifiers {
+    CGFloat iconSize = 18;
+    
+    for (PSSpecifier *spec in _specifiers) {
+        NSString *label = [spec propertyForKey:@"label"];
+        if (!label) continue;
+        
+        UIImage *icon = nil;
+        
+        // General section
+        if ([label isEqualToString:@"Enable NetLogger"]) {
+            icon = iconWithSFSymbol(@"power", [UIColor systemGreenColor], iconSize);
+        } else if ([label isEqualToString:@"Disable App Caching (No 304)"]) {
+            icon = iconWithSFSymbol(@"arrow.triangle.2.circlepath", [UIColor systemOrangeColor], iconSize);
+        } else if ([label isEqualToString:@"Enable Socket Capture (TCP/UDP)"]) {
+            icon = iconWithSFSymbol(@"bolt.horizontal", [UIColor systemPurpleColor], iconSize);
+        }
+        // App Selection
+        else if ([label isEqualToString:@"Select Apps to Monitor"]) {
+            icon = iconWithSFSymbol(@"apps.iphone", [UIColor systemBlueColor], iconSize);
+        }
+        // Blacklist
+        else if ([label isEqualToString:@"Blacklisted Domains"]) {
+            icon = iconWithSFSymbol(@"shield.slash", [UIColor systemRedColor], iconSize);
+        }
+        // MitM
+        else if ([label isEqualToString:@"MitM Response Rules"]) {
+            icon = iconWithSFSymbol(@"wand.and.rays", [UIColor systemIndigoColor], iconSize);
+        }
+        // Logs
+        else if ([label isEqualToString:@"Network Analytics"]) {
+            icon = iconWithSFSymbol(@"chart.bar.xaxis", [UIColor colorWithRed:0.35 green:0.60 blue:0.95 alpha:1.0], iconSize);
+        }
+        else if ([label isEqualToString:@"View Network Logs"]) {
+            icon = iconWithSFSymbol(@"list.bullet.rectangle", [UIColor systemTealColor], iconSize);
+        }
+        // About
+        else if ([label containsString:@"GitHub"]) {
+            icon = iconWithSFSymbol(@"star.fill", [UIColor systemYellowColor], iconSize);
+        } else if ([label isEqualToString:@"Version"]) {
+            icon = iconWithSFSymbol(@"info.circle", [UIColor systemGray2Color], iconSize);
+        } else if ([label isEqualToString:@"Author"]) {
+            icon = iconWithSFSymbol(@"person.fill", [UIColor systemCyanColor], iconSize);
+        }
+        // Danger
+        else if ([label isEqualToString:@"Restore Default Settings"]) {
+            icon = iconWithSFSymbol(@"arrow.counterclockwise", [UIColor systemRedColor], iconSize);
+        }
+        
+        if (icon) {
+            [spec setProperty:icon forKey:@"iconImage"];
+        }
+    }
 }
 
 - (void)openGithub {
@@ -759,6 +981,12 @@ __attribute__((constructor)) static void loadAltList() {
       CFSTR("blacklistedDomains"), CFSTR("com.minh.netlogger"));
   if (blacklist) {
     settings[@"blacklistedDomains"] = (__bridge_transfer id)blacklist;
+  }
+
+  CFPropertyListRef blRules = CFPreferencesCopyAppValue(
+      CFSTR("blacklistRules"), CFSTR("com.minh.netlogger"));
+  if (blRules) {
+    settings[@"blacklistRules"] = (__bridge_transfer id)blRules;
   }
 
   CFPropertyListRef mitm = CFPreferencesCopyAppValue(

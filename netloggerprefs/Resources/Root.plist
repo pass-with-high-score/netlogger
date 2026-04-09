@@ -138,6 +138,16 @@
 			<key>cell</key>
 			<string>PSLinkCell</string>
 			<key>label</key>
+			<string>Network Analytics</string>
+			<key>detail</key>
+			<string>NLAnalyticsController</string>
+			<key>isController</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
 			<string>View Network Logs</string>
 			<key>detail</key>
 			<string>NetLoggerLogViewerController</string>

@@ -445,13 +445,10 @@ static UIColor *ruleTypeColor(NSInteger type) {
     NSMutableArray *_rules;
 }
 
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = @"MitM Rules";
+- (void)loadView {
+    [super loadView];
+    self.view = [[UIView alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
-
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
-        initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addRule)];
 
     _tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
     _tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -461,6 +458,14 @@ static UIColor *ruleTypeColor(NSInteger type) {
     _tableView.rowHeight = UITableViewAutomaticDimension;
     [_tableView registerClass:[NLMitmRuleCell class] forCellReuseIdentifier:@"RuleCell"];
     [self.view addSubview:_tableView];
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"MitM Rules";
+
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addRule)];
 
     [self loadRules];
 }

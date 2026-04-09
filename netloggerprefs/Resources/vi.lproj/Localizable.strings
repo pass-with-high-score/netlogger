@@ -75,3 +75,15 @@
 "Suffix match: any host ending with this pattern will be affected (e.g. '.google.com' matches 'ads.google.com')." = "Khớp hậu tố: ảnh hưởng tất cả host kết thúc bằng mẫu (vd: '.google.com' khớp 'ads.google.com').";
 "Keyword match: any host containing this keyword will be affected." = "Khớp từ khóa: ảnh hưởng tất cả host chứa từ khóa này.";
 "Direct: allow traffic but hide from logs. Reject: block the request entirely." = "Direct: cho phép truy cập nhưng ẩn khỏi log. Reject: chặn hoàn toàn yêu cầu.";
+
+"Network Analytics" = "Thống kê Mạng";
+"Total Requests" = "Tổng Yêu cầu";
+"Success Rate" = "Tỉ lệ Thành công";
+"Avg Response Time" = "Thời gian Phản hồi TB";
+"Total Traffic" = "Tổng Lưu lượng";
+"Status Codes" = "Mã Trạng thái";
+"HTTP Methods" = "Phương thức HTTP";
+"Top Domains" = "Tên miền Phổ biến";
+"Per App" = "Theo Ứng dụng";
+"No Analytics Data" = "Chưa có Dữ liệu Thống kê";
+"Start capturing network traffic\nto see analytics here." = "Bật ghi lại lưu lượng mạng\nđể xem thống kê tại đây.";

@@ -75,3 +75,15 @@
 "Suffix match: any host ending with this pattern will be affected (e.g. '.google.com' matches 'ads.google.com')." = "Suffix match: any host ending with this pattern will be affected (e.g. '.google.com' matches 'ads.google.com').";
 "Keyword match: any host containing this keyword will be affected." = "Keyword match: any host containing this keyword will be affected.";
 "Direct: allow traffic but hide from logs. Reject: block the request entirely." = "Direct: allow traffic but hide from logs. Reject: block the request entirely.";
+
+"Network Analytics" = "Network Analytics";
+"Total Requests" = "Total Requests";
+"Success Rate" = "Success Rate";
+"Avg Response Time" = "Avg Response Time";
+"Total Traffic" = "Total Traffic";
+"Status Codes" = "Status Codes";
+"HTTP Methods" = "HTTP Methods";
+"Top Domains" = "Top Domains";
+"Per App" = "Per App";
+"No Analytics Data" = "No Analytics Data";
+"Start capturing network traffic\nto see analytics here." = "Start capturing network traffic\nto see analytics here.";
